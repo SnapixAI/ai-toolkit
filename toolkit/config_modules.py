@@ -447,6 +447,8 @@ class ModelConfig:
         self.quantize = kwargs.get("quantize", False)
         self.low_vram = kwargs.get("low_vram", False)
         self.attn_masking = kwargs.get("attn_masking", False)
+        self.controlnet_path = kwargs.get("controlnet_path", None)
+        
         if self.attn_masking and not self.is_flux:
             raise ValueError("attn_masking is only supported with flux models currently")
         pass
@@ -674,6 +676,7 @@ class GenerateImageConfig:
             latents: Union[torch.Tensor | None] = None,  # input latent to start with,
             extra_kwargs: dict = None,  # extra data to save with prompt file
             refiner_start_at: float = 0.5,  # start at this percentage of a step. 0.0 to 1.0 . 1.0 is the end
+            control_image: str = None,  # path to control image
             extra_values: List[float] = None,  # extra values to save with prompt file
             logger: Optional[EmptyLogger] = None,
     ):
@@ -703,6 +706,7 @@ class GenerateImageConfig:
         self.adapter_conditioning_scale: float = adapter_conditioning_scale
         self.extra_kwargs = extra_kwargs if extra_kwargs is not None else {}
         self.refiner_start_at = refiner_start_at
+        self.control_image = control_image
         self.extra_values = extra_values if extra_values is not None else []
 
         # prompt string will override any settings above
