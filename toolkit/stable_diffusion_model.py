@@ -765,6 +765,18 @@ class StableDiffusion:
         self.text_encoder = text_encoder
         self.pipeline = pipe
         self.load_refiner()
+
+        # Add ControlNet loading here
+        if self.model_config.controlnet_path:
+            print(f"Loading ControlNet from {self.model_config.controlnet_path}")
+            self.controlnet = ControlNetModel.from_pretrained(
+                self.model_config.controlnet_path,
+                torch_dtype=self.torch_dtype
+            ).to(self.device_torch)
+            self.controlnet.eval()  # Set to evaluation mode
+        else:
+            self.controlnet = None
+
         self.is_loaded = True
 
         if self.model_config.assistant_lora_path is not None:
@@ -1066,6 +1078,7 @@ class StableDiffusion:
 
                     extra = {}
                     validation_image = None
+                    controlnet_image = None  # Initialize controlnet_image
                     if self.adapter is not None and gen_config.adapter_image_path is not None:
                         validation_image = Image.open(gen_config.adapter_image_path).convert("RGB")
                         if isinstance(self.adapter, T2IAdapter):
@@ -1095,6 +1108,10 @@ class StableDiffusion:
                             validation_image = validation_image * 2.0 - 1.0
                             validation_image = validation_image.unsqueeze(0)
                             self.adapter.set_reference_images(validation_image)
+                        
+                        # Prepare controlnet_image if ControlNet is being used
+                        if isinstance(self.adapter, ControlNetModel) or self.controlnet is not None:
+                            controlnet_image = validation_image.to(self.device_torch)
 
                     if self.network is not None:
                         self.network.multiplier = gen_config.network_multiplier
@@ -1224,6 +1241,7 @@ class StableDiffusion:
                             guidance_scale=gen_config.guidance_scale,
                             guidance_rescale=grs,
                             latents=gen_config.latents,
+                            image=controlnet_image,  # Pass controlnet_image here
                             **extra
                         ).images[0]
                     elif self.is_v3:
@@ -1237,6 +1255,7 @@ class StableDiffusion:
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
                             latents=gen_config.latents,
+                            image=controlnet_image,  # Pass controlnet_image here
                             **extra
                         ).images[0]
                     elif self.is_flux:
@@ -1251,6 +1270,7 @@ class StableDiffusion:
                                 num_inference_steps=gen_config.num_inference_steps,
                                 guidance_scale=gen_config.guidance_scale,
                                 latents=gen_config.latents,
+                                image=controlnet_image,  # Pass controlnet_image here
                                 **extra
                             ).images[0]
                         else:
@@ -1264,6 +1284,7 @@ class StableDiffusion:
                                 num_inference_steps=gen_config.num_inference_steps,
                                 guidance_scale=gen_config.guidance_scale,
                                 latents=gen_config.latents,
+                                image=controlnet_image,  # Pass controlnet_image here
                                 **extra
                             ).images[0]
                     elif self.is_pixart:
@@ -1284,6 +1305,7 @@ class StableDiffusion:
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
                             latents=gen_config.latents,
+                            image=controlnet_image,  # Pass controlnet_image here
                             **extra
                         ).images[0]
                     elif self.is_auraflow:
@@ -1293,11 +1315,11 @@ class StableDiffusion:
                             prompt=None,
                             prompt_embeds=conditional_embeds.text_embeds.to(self.device_torch, dtype=self.unet.dtype),
                             prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch,
-                                                                                       dtype=self.unet.dtype),
+                                                                                    dtype=self.unet.dtype),
                             negative_prompt_embeds=unconditional_embeds.text_embeds.to(self.device_torch,
-                                                                                       dtype=self.unet.dtype),
+                                                                                    dtype=self.unet.dtype),
                             negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch,
-                                                                                                  dtype=self.unet.dtype),
+                                                                                                dtype=self.unet.dtype),
                             negative_prompt=None,
                             # negative_prompt=gen_config.negative_prompt,
                             height=gen_config.height,
@@ -1305,6 +1327,7 @@ class StableDiffusion:
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
                             latents=gen_config.latents,
+                            image=controlnet_image,  # Pass controlnet_image here
                             **extra
                         ).images[0]
                     else:
@@ -1318,6 +1341,7 @@ class StableDiffusion:
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
                             latents=gen_config.latents,
+                            image=controlnet_image,  # Pass controlnet_image here
                             **extra
                         ).images[0]
 
@@ -1494,6 +1518,7 @@ class StableDiffusion:
             rescale_cfg=None,
             return_conditional_pred=False,
             guidance_embedding_scale=1.0,
+            controlnet_image=None,  # New parameter
             **kwargs,
     ):
         conditional_pred = None
@@ -1646,6 +1671,17 @@ class StableDiffusion:
                     ).sample
 
             else:
+                # ControlNet integration
+                if self.controlnet and controlnet_image is not None:
+                    down_block_res_samples, mid_block_res_sample = self.controlnet(
+                        latent_model_input,
+                        timestep,
+                        encoder_hidden_states=text_embeddings.text_embeds,
+                        controlnet_cond=controlnet_image,
+                        return_dict=False,
+                    )
+                    kwargs["down_block_additional_residuals"] = down_block_res_samples
+                    kwargs["mid_block_additional_residual"] = mid_block_res_sample
 
                 # predict the noise residual
                 noise_pred = self.unet(
@@ -1693,6 +1729,18 @@ class StableDiffusion:
                         else:
                             raise ValueError(
                                 f"Batch size of latents {latent_model_input.shape[0]} must be the same or half the batch size of timesteps {timestep.shape[0]}")
+
+            # ControlNet integration
+            if self.controlnet and controlnet_image is not None:
+                down_block_res_samples, mid_block_res_sample = self.controlnet(
+                    latent_model_input,
+                    timestep,
+                    encoder_hidden_states=text_embeddings.text_embeds,
+                    controlnet_cond=controlnet_image,
+                    return_dict=False,
+                )
+                kwargs["down_block_additional_residuals"] = down_block_res_samples
+                kwargs["mid_block_additional_residual"] = mid_block_res_sample
 
             # predict the noise residual
             if self.is_pixart:
