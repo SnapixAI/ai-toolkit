@@ -925,6 +925,7 @@ class SDTrainer(BaseSDTrainProcess):
             timesteps: Union[int, torch.Tensor] = 1,
             conditional_embeds: Union[PromptEmbeds, None] = None,
             unconditional_embeds: Union[PromptEmbeds, None] = None,
+            edge_maps: Union[torch.Tensor, None] = None,
             **kwargs,
     ):
         dtype = get_torch_dtype(self.train_config.dtype)
@@ -936,12 +937,17 @@ class SDTrainer(BaseSDTrainProcess):
             guidance_scale=self.train_config.cfg_scale,
             detach_unconditional=False,
             rescale_cfg=self.train_config.cfg_rescale,
+            edge_maps=edge_maps,
             **kwargs
         )
 
     def train_single_accumulation(self, batch: DataLoaderBatchDTO):
         self.timer.start('preprocess_batch')
         batch = self.preprocess_batch(batch)
+
+        if edge_maps:
+            edge_maps = torch.stack(edge_maps).to(self.device_torch, dtype=dtype)
+    
         dtype = get_torch_dtype(self.train_config.dtype)
         # sanity check
         if self.sd.vae.dtype != self.sd.vae_torch_dtype:
@@ -1559,6 +1565,7 @@ class SDTrainer(BaseSDTrainProcess):
                             timesteps=timesteps,
                             conditional_embeds=conditional_embeds.to(self.device_torch, dtype=dtype),
                             unconditional_embeds=unconditional_embeds,
+                            edge_maps=edge_maps,  # Add this line
                             **pred_kwargs
                         )
                     self.after_unet_predict()

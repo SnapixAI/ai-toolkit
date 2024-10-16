@@ -18,7 +18,7 @@ import albumentations as A
 
 from toolkit.buckets import get_bucket_for_image_size, BucketResolution
 from toolkit.config_modules import DatasetConfig, preprocess_dataset_raw_config
-from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments, CLIPCachingMixin
+from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, EdgeMapCachingMixin, LatentCachingMixin, Augments, CLIPCachingMixin
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 
 import platform
@@ -366,7 +366,7 @@ class PairedImageDataset(Dataset):
         return img, prompt, (self.neg_weight, self.pos_weight)
 
 
-class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, CaptionMixin, Dataset):
+class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, CaptionMixin, EdgeMapCachingMixin, Dataset):
 
     def __init__(
             self,
@@ -509,6 +509,8 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
                 self.cache_latents_all_latents()
             if self.is_caching_clip_vision_to_disk:
                 self.cache_clip_vision_to_disk()
+
+            self.cache_edge_maps()
         else:
             if self.dataset_config.poi is not None:
                 # handle cropping to a specific point of interest
@@ -525,6 +527,11 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
         file_item = copy.deepcopy(self.file_list[index])
         file_item.load_and_process_image(self.transform)
         file_item.load_caption(self.caption_dict)
+        
+        # Load edge map
+        edge_map = self.load_edge_map(file_item)
+        file_item.edge_map = edge_map
+        
         return file_item
 
     def __getitem__(self, item):

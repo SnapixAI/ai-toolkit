@@ -62,6 +62,9 @@ from huggingface_hub import hf_hub_download
 from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
 from typing import TYPE_CHECKING
 
+from diffusers import FluxControlNetPipeline, FluxControlNetModel
+
+
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
 
@@ -127,6 +130,7 @@ class StableDiffusion:
             noise_scheduler=None,
             quantize_device=None,
     ):
+        self.controlnet = None
         self.custom_pipeline = custom_pipeline
         self.device = device
         self.dtype = dtype
@@ -192,6 +196,12 @@ class StableDiffusion:
         if self.is_loaded:
             return
         dtype = get_torch_dtype(self.dtype)
+
+        print("loading controlnet")
+        self.controlnet = FluxControlNetModel.from_pretrained(
+            "XLabs-AI/flux-controlnet-canny-v3",
+            torch_dtype=self.torch_dtype
+        )
 
         # move the betas alphas and  alphas_cumprod to device. Sometimed they get stuck on cpu, not sure why
         # self.noise_scheduler.betas = self.noise_scheduler.betas.to(self.device_torch)
@@ -540,8 +550,10 @@ class StableDiffusion:
 
             if self.model_config.lora_path is not None:
                 print("Fusing in LoRA")
+                print("controlnet", self.controlnet)
+
                 # need the pipe for peft
-                pipe: FluxPipeline = FluxPipeline(
+                pipe: FluxPipeline = FluxControlNetPipeline(
                     scheduler=None,
                     text_encoder=None,
                     tokenizer=None,
@@ -549,6 +561,7 @@ class StableDiffusion:
                     tokenizer_2=None,
                     vae=None,
                     transformer=transformer,
+                    controlnet=self.controlnet
                 )
                 if self.low_vram:
                     # we cannot fuse the loras all at once without ooming in lowvram mode, so we have to do it in parts
@@ -640,7 +653,8 @@ class StableDiffusion:
             text_encoder.to(self.device_torch, dtype=dtype)
 
             print("making pipe")
-            pipe: FluxPipeline = FluxPipeline(
+            print("controlnet", self.controlnet)
+            pipe: FluxPipeline = FluxControlNetPipeline(
                 scheduler=scheduler,
                 text_encoder=text_encoder,
                 tokenizer=tokenizer,
@@ -648,6 +662,7 @@ class StableDiffusion:
                 tokenizer_2=tokenizer_2,
                 vae=vae,
                 transformer=None,
+                controlnet=self.controlnet
             )
             pipe.text_encoder_2 = text_encoder_2
             pipe.transformer = transformer
@@ -968,7 +983,8 @@ class StableDiffusion:
                     )
 
                 else:
-                    pipeline = FluxPipeline(
+                    print("controlnet", self.controlnet)
+                    pipeline = FluxControlNetPipeline(
                         vae=self.vae,
                         transformer=self.unet,
                         text_encoder=self.text_encoder[0],
@@ -976,6 +992,7 @@ class StableDiffusion:
                         tokenizer=self.tokenizer[0],
                         tokenizer_2=self.tokenizer[1],
                         scheduler=noise_scheduler,
+                        controlnet=self.controlnet,
                         **extra_args
                     )
                 pipeline.watermark = None
@@ -1065,6 +1082,13 @@ class StableDiffusion:
                     gen_config = image_configs[i]
 
                     extra = {}
+
+                    if self.controlnet:
+                        extra['control_image'] = gen_config.control_image
+                        extra['controlnet_conditioning_scale'] = gen_config.controlnet_conditioning_scale
+                        extra['control_guidance_start'] = gen_config.control_guidance_start
+                        extra['control_guidance_end'] = gen_config.control_guidance_end
+
                     validation_image = None
                     if self.adapter is not None and gen_config.adapter_image_path is not None:
                         validation_image = Image.open(gen_config.adapter_image_path).convert("RGB")
@@ -1494,6 +1518,7 @@ class StableDiffusion:
             rescale_cfg=None,
             return_conditional_pred=False,
             guidance_embedding_scale=1.0,
+            edge_maps: Union[torch.Tensor, None] = None,
             **kwargs,
     ):
         conditional_pred = None
@@ -1693,6 +1718,28 @@ class StableDiffusion:
                         else:
                             raise ValueError(
                                 f"Batch size of latents {latent_model_input.shape[0]} must be the same or half the batch size of timesteps {timestep.shape[0]}")
+
+            if self.controlnet and edge_maps is not None:
+                # Ensure edge_maps are on the correct device and dtype
+                edge_maps = edge_maps.to(self.device_torch, dtype=self.torch_dtype)
+                
+                # If we're doing classifier free guidance, we need to repeat the control image
+                if do_classifier_free_guidance:
+                    edge_maps = torch.cat([edge_maps] * 2, dim=0)
+                
+                # Get the additional residuals from the controlnet
+                controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+                    latent_model_input,
+                    timestep,
+                    encoder_hidden_states=text_embeddings.text_embeds,
+                    controlnet_cond=edge_maps,
+                    return_dict=False,
+                )
+                # Add the residuals to the kwargs
+                # kwargs['down_block_additional_residuals'] = down_block_res_samples
+                # kwargs['mid_block_additional_residual'] = mid_block_res_sample
+                kwargs['controlnet_block_samples'] = controlnet_block_samples
+                kwargs['controlnet_single_block_samples'] = controlnet_single_block_samples
 
             # predict the noise residual
             if self.is_pixart:
