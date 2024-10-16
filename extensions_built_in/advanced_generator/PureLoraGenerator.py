@@ -90,6 +90,10 @@ class PureLoraGenerator(BaseExtensionProcess):
                     output_path=output_path,
                     output_ext=sample_config.ext,
                     adapter_conditioning_scale=sample_config.adapter_conditioning_scale,
+                    control_image=sample_config.control_image,
+                    controlnet_conditioning_scale=sample_config.controlnet_conditioning_scale,
+                    control_guidance_start=sample_config.control_guidance_start,
+                    control_guidance_end=sample_config.control_guidance_end,
                     **extra_args
                 ))
 
