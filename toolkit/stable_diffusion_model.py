@@ -197,6 +197,7 @@ class StableDiffusion:
             return
         dtype = get_torch_dtype(self.dtype)
 
+        print("loading controlnet")
         self.controlnet = FluxControlNetModel.from_pretrained(
             "XLabs-AI/flux-controlnet-canny-v3",
             torch_dtype=self.torch_dtype
@@ -549,6 +550,8 @@ class StableDiffusion:
 
             if self.model_config.lora_path is not None:
                 print("Fusing in LoRA")
+                print("controlnet", self.controlnet)
+
                 # need the pipe for peft
                 pipe: FluxPipeline = FluxControlNetPipeline(
                     scheduler=None,
@@ -650,6 +653,7 @@ class StableDiffusion:
             text_encoder.to(self.device_torch, dtype=dtype)
 
             print("making pipe")
+            print("controlnet", self.controlnet)
             pipe: FluxPipeline = FluxControlNetPipeline(
                 scheduler=scheduler,
                 text_encoder=text_encoder,
@@ -979,6 +983,7 @@ class StableDiffusion:
                     )
 
                 else:
+                    print("controlnet", self.controlnet)
                     pipeline = FluxControlNetPipeline(
                         vae=self.vae,
                         transformer=self.unet,
