@@ -557,7 +557,8 @@ class StableDiffusion:
                     text_encoder_2=None,
                     tokenizer_2=None,
                     vae=None,
-                    transformer=transformer
+                    transformer=transformer,
+                    controlnet=self.controlnet
                 )
                 if self.low_vram:
                     # we cannot fuse the loras all at once without ooming in lowvram mode, so we have to do it in parts
