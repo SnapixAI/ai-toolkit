@@ -7,6 +7,7 @@ import os
 import random
 from collections import OrderedDict
 from typing import TYPE_CHECKING, List, Dict, Union
+import warnings
 
 import cv2
 import numpy as np
@@ -31,6 +32,35 @@ if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import FileItemDTO
     from toolkit.stable_diffusion_model import StableDiffusion
 
+def HWC3(x):
+    assert x.dtype == np.uint8
+    if x.ndim == 2:
+        x = x[:, :, None]
+    assert x.ndim == 3
+    H, W, C = x.shape
+    assert C == 1 or C == 3 or C == 4
+    if C == 3:
+        return x
+    if C == 1:
+        return np.concatenate([x, x, x], axis=2)
+    if C == 4:
+        color = x[:, :, 0:3].astype(np.float32)
+        alpha = x[:, :, 3:4].astype(np.float32) / 255.0
+        y = color * alpha + 255.0 * (1.0 - alpha)
+        y = y.clip(0, 255).astype(np.uint8)
+        return y
+
+def resize_image(input_image, resolution):
+    H, W, C = input_image.shape
+    H = float(H)
+    W = float(W)
+    k = float(resolution) / min(H, W)
+    H *= k
+    W *= k
+    H = int(np.round(H / 64.0)) * 64
+    W = int(np.round(W / 64.0)) * 64
+    img = cv2.resize(input_image, (W, H), interpolation=cv2.INTER_LANCZOS4 if k > 1 else cv2.INTER_AREA)
+    return img
 
 class EdgeMapFileItemDTOMixin:
     def __init__(self: 'FileItemDTO', *args, **kwargs):
@@ -59,7 +89,7 @@ class EdgeMapFileItemDTOMixin:
         if not os.path.exists(self.edge_map_path):
             # Generate and save the edge map if it doesn't exist
             img = self.load_image(self.path)
-            edge_map = self.generate_edge_map(img)
+            edge_map = self.generate_edge_map(input_image=img, output_type="np")
             os.makedirs(os.path.dirname(self.edge_map_path), exist_ok=True)
             cv2.imwrite(self.edge_map_path, edge_map)
         else:
@@ -81,19 +111,34 @@ class EdgeMapFileItemDTOMixin:
         img = img.convert('RGB')
         return np.array(img)
 
-    def generate_edge_map(self: 'FileItemDTO', image: np.ndarray) -> np.ndarray:
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    def generate_edge_map(self, input_image=None, detect_resolution=1024, image_resolution=1024, output_type=None, **kwargs):
+        if "img" in kwargs:
+            warnings.warn("img is deprecated, please use `input_image=...` instead.", DeprecationWarning)
+            input_image = kwargs.pop("img")
         
-        if self.edge_detection_method == 'canny':
-            edge_map = cv2.Canny(gray, self.canny_threshold1, self.canny_threshold2)
-        elif self.edge_detection_method == 'sobel':
-            sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=5)
-            sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=5)
-            edge_map = np.sqrt(sobelx**2 + sobely**2)
-            edge_map = np.uint8(255 * edge_map / np.max(edge_map))
+        if input_image is None:
+            raise ValueError("input_image must be defined.")
+
+        if not isinstance(input_image, np.ndarray):
+            input_image = np.array(input_image, dtype=np.uint8)
+            output_type = output_type or "pil"
         else:
-            raise ValueError(f"Unsupported edge detection method: {self.edge_detection_method}")
+            output_type = output_type or "np"
         
+        input_image = HWC3(input_image)
+        input_image = resize_image(input_image, detect_resolution)
+
+        edge_map = cv2.Canny(input_image, self.canny_threshold1, self.canny_threshold2)
+        edge_map = HWC3(edge_map)
+        
+        img = resize_image(input_image, image_resolution)
+        H, W, C = img.shape
+
+        edge_map = cv2.resize(edge_map, (W, H), interpolation=cv2.INTER_LINEAR)
+        
+        if output_type == "pil":
+            edge_map = Image.fromarray(edge_map)
+            
         return edge_map
 
     def cleanup_edge_map(self: 'FileItemDTO'):

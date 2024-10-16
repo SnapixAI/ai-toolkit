@@ -198,7 +198,7 @@ class StableDiffusion:
         dtype = get_torch_dtype(self.dtype)
 
         self.controlnet = FluxControlNetModel.from_pretrained(
-            "XLabs-AI/flux-controlnet-canny",
+            "XLabs-AI/flux-controlnet-canny-v3",
             torch_dtype=self.torch_dtype
         )
 
@@ -1722,17 +1722,18 @@ class StableDiffusion:
                     edge_maps = torch.cat([edge_maps] * 2, dim=0)
                 
                 # Get the additional residuals from the controlnet
-                down_block_res_samples, mid_block_res_sample = self.controlnet(
+                controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
                     latent_model_input,
                     timestep,
                     encoder_hidden_states=text_embeddings.text_embeds,
                     controlnet_cond=edge_maps,
                     return_dict=False,
                 )
-                
                 # Add the residuals to the kwargs
-                kwargs['down_block_additional_residuals'] = down_block_res_samples
-                kwargs['mid_block_additional_residual'] = mid_block_res_sample
+                # kwargs['down_block_additional_residuals'] = down_block_res_samples
+                # kwargs['mid_block_additional_residual'] = mid_block_res_sample
+                kwargs['controlnet_block_samples'] = controlnet_block_samples
+                kwargs['controlnet_single_block_samples'] = controlnet_single_block_samples
 
             # predict the noise residual
             if self.is_pixart:
