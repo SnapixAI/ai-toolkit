@@ -58,7 +58,7 @@ class SampleConfig:
                                            0.5)  # step to start using refiner on sample if it exists
         self.extra_values = kwargs.get('extra_values', [])
         self.control_image = kwargs.get('control_image', None)
-        self.controlnet_conditioning_scale = kwargs.get('controlnet_conditioning_scale', 1.0)
+        self.controlnet_conditioning_scale = kwargs.get('controlnet_conditioning_scale', 0.75)
         self.control_guidance_start = kwargs.get('control_guidance_start', 0.0)
         self.control_guidance_end = kwargs.get('control_guidance_end', 1.0)
 
