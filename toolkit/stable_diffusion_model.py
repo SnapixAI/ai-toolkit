@@ -94,6 +94,192 @@ DO_NOT_TRAIN_WEIGHTS = [
 DeviceStatePreset = Literal['cache_latents', 'generate']
 
 
+import torch
+import numpy as np
+
+class ControlImagePreparer:
+    def __init__(self, vae, image_processor, controlnet, vae_scale_factor=16):
+        """
+        Initializes the ControlImagePreparer with required modules.
+
+        Args:
+            vae: The Variational Autoencoder (VAE) for encoding the control image.
+            image_processor: The image processor for preprocessing images.
+            controlnet: The ControlNet model to apply conditioning.
+            vae_scale_factor: Scale factor of the VAE (default is 16).
+        """
+        self.vae = vae
+        self.image_processor = image_processor
+        self.controlnet = controlnet
+        self.vae_scale_factor = vae_scale_factor
+
+    def preprocess_image(self, image, width, height, batch_size, num_images_per_prompt, device, dtype, do_classifier_free_guidance=False, guess_mode=False):
+        """
+        Preprocesses the control image by adjusting its size, repeating it, and moving it to the target device.
+
+        Args:
+            image: The control image to be preprocessed.
+            width: The target width for the image.
+            height: The target height for the image.
+            batch_size: The number of images in the batch.
+            num_images_per_prompt: Number of images to generate per prompt.
+            device: The target device (e.g., 'cuda' or 'cpu').
+            dtype: The target data type (e.g., torch.float32).
+            do_classifier_free_guidance: Whether classifier-free guidance is enabled.
+            guess_mode: Whether to apply guessing mode in classifier-free guidance.
+
+        Returns:
+            Preprocessed image tensor.
+        """
+        if not isinstance(image, torch.Tensor):
+            image = self.image_processor.preprocess(image, height=height, width=width)
+        
+        image_batch_size = image.shape[0]
+        repeat_by = batch_size if image_batch_size == 1 else num_images_per_prompt
+        image = image.repeat_interleave(repeat_by, dim=0)
+        image = image.to(device=device, dtype=dtype)
+
+        if do_classifier_free_guidance and not guess_mode:
+            image = torch.cat([image] * 2)
+        
+        return image
+
+    def encode_image(self, image, batch_size, num_images_per_prompt, device, dtype, num_channels_latents):
+        """
+        Encodes the control image using the VAE, scales and packs it for ControlNet input.
+
+        Args:
+            image: The control image tensor to encode.
+            batch_size: The number of images in the batch.
+            num_images_per_prompt: Number of images per prompt.
+            device: The target device (e.g., 'cuda' or 'cpu').
+            dtype: The target data type (e.g., torch.float32).
+            num_channels_latents: The number of latent channels.
+
+        Returns:
+            Encoded and packed control image.
+        """
+        # Encode the image using VAE
+        control_image_latents = self.vae.encode(image).latent_dist.sample()
+        control_image_latents = (control_image_latents - self.vae.config.shift_factor) * self.vae.config.scaling_factor
+
+        # Get the latent dimensions
+        height_control_image, width_control_image = control_image_latents.shape[2:]
+
+        # Pack latents for ControlNet
+        control_image_latents = self._pack_latents(
+            control_image_latents,
+            batch_size * num_images_per_prompt,
+            num_channels_latents,
+            height_control_image,
+            width_control_image
+        )
+
+        return control_image_latents
+
+    @staticmethod
+    def _pack_latents(latents, batch_size, num_channels_latents, height, width):
+        """
+        Packs latents into the format required for ControlNet.
+
+        Args:
+            latents: The latent tensor to pack.
+            batch_size: The number of images in the batch.
+            num_channels_latents: The number of latent channels.
+            height: The height of the latents.
+            width: The width of the latents.
+
+        Returns:
+            Packed latent tensor.
+        """
+        latents = latents.view(batch_size, num_channels_latents, height // 2, 2, width // 2, 2)
+        latents = latents.permute(0, 2, 4, 1, 3, 5)
+        latents = latents.reshape(batch_size, (height // 2) * (width // 2), num_channels_latents * 4)
+
+        return latents
+
+    def prepare_control_image(self, image, width, height, batch_size, num_images_per_prompt, device, dtype, num_channels_latents, control_mode=None):
+        """
+        Prepares the control image by preprocessing, encoding (if needed), and handling the control mode.
+
+        Args:
+            image: The control image or list of control images to prepare.
+            width: The target width for the image.
+            height: The target height for the image.
+            batch_size: The number of images in the batch.
+            num_images_per_prompt: Number of images to generate per prompt.
+            device: The target device (e.g., 'cuda' or 'cpu').
+            dtype: The target data type (e.g., torch.float32).
+            num_channels_latents: The number of latent channels.
+            control_mode: Optional control mode for ControlNet.
+
+        Returns:
+            Prepared control image(s) and control mode tensor(s).
+        """
+        if isinstance(image, list):
+            # Handle multiple control images (one per batch element)
+            assert len(image) == batch_size, f"Expected {batch_size} control images, but got {len(image)}"
+            control_images = []
+            control_modes = []
+
+            for i, single_image in enumerate(image):
+                control_image = self.preprocess_image(
+                    image=single_image,
+                    width=width,
+                    height=height,
+                    batch_size=1,  # Each image is handled separately
+                    num_images_per_prompt=num_images_per_prompt,
+                    device=device,
+                    dtype=dtype
+                )
+
+                if self.controlnet.input_hint_block is None:
+                    control_image = self.encode_image(
+                        image=control_image,
+                        batch_size=1,
+                        num_images_per_prompt=num_images_per_prompt,
+                        device=device,
+                        dtype=dtype,
+                        num_channels_latents=num_channels_latents
+                    )
+                
+                control_images.append(control_image)
+
+                if control_mode is not None:
+                    control_mode_tensor = torch.tensor(control_mode[i]).to(device, dtype=torch.long).view(-1, 1)
+                    control_modes.append(control_mode_tensor)
+
+            return control_images, control_modes if control_mode is not None else None
+        
+        else:
+            # Handle a single control image (same for all batch elements)
+            control_image = self.preprocess_image(
+                image=image,
+                width=width,
+                height=height,
+                batch_size=batch_size,
+                num_images_per_prompt=num_images_per_prompt,
+                device=device,
+                dtype=dtype
+            )
+
+            if self.controlnet.input_hint_block is None:
+                control_image = self.encode_image(
+                    image=control_image,
+                    batch_size=batch_size,
+                    num_images_per_prompt=num_images_per_prompt,
+                    device=device,
+                    dtype=dtype,
+                    num_channels_latents=num_channels_latents
+                )
+
+            control_mode_tensor = None
+            if control_mode is not None:
+                control_mode_tensor = torch.tensor(control_mode).to(device, dtype=torch.long).view(-1, 1).expand(control_image.shape[0], 1)
+
+            return control_image, control_mode_tensor
+
+
 class BlankNetwork:
 
     def __init__(self):
@@ -1516,7 +1702,7 @@ class StableDiffusion:
             rescale_cfg=None,
             return_conditional_pred=False,
             guidance_embedding_scale=1.0,
-            edge_maps: Union[torch.Tensor, None] = None,
+            edge_maps: Union[List[torch.Tensor], None] = None,
             **kwargs,
     ):
         conditional_pred = None
@@ -1695,24 +1881,18 @@ class StableDiffusion:
                     noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
 
         else:
-            if edge_maps is not None:
-                edge_maps = edge_maps.to(self.device_torch, dtype=self.torch_dtype)
-
             with torch.no_grad():
                 if do_classifier_free_guidance:
                     # if we are doing classifier free guidance, need to double up
                     latent_model_input = torch.cat([latents] * 2, dim=0)
                     timestep = torch.cat([timestep] * 2)
-                    if edge_maps is not None:
+                    # if edge_maps is not None:
                         # print shape before and after
-                        edge_maps = torch.cat([edge_maps] * 2, dim=0)
+                        # edge_maps = torch.cat([edge_maps] * 2, dim=0)
                 else:
                     latent_model_input = latents
 
                 latent_model_input = scale_model_input(latent_model_input, timestep)
-
-                # print shape before and after
-                edge_maps = scale_model_input(edge_maps, timestep)
 
                 # check if we need to concat timesteps
                 if isinstance(timestep, torch.Tensor) and len(timestep.shape) > 1:
@@ -1727,19 +1907,24 @@ class StableDiffusion:
                                 f"Batch size of latents {latent_model_input.shape[0]} must be the same or half the batch size of timesteps {timestep.shape[0]}")
 
             if self.controlnet and edge_maps is not None:
-                # Print shapes before ControlNet
-                print("Shapes before ControlNet:")
-                print(f"latent_model_input: {latent_model_input.shape}")
-                print(f"timestep: {timestep.shape}")
-                print(f"text_embeddings.text_embeds: {text_embeddings.text_embeds.shape}")
-                print(f"edge_maps: {edge_maps.shape}")
-                print("dtype", self.torch_dtype)
+                batch_size, ch, h, w = list(latents.shape)
+                control_image_preparer = ControlImagePreparer(self.vae, self.pipeline.image_processor, self.controlnet)
+                prepared_control_image, control_mode = control_image_preparer.prepare_control_image(
+                                                        image=edge_maps,
+                                                        width=w, 
+                                                        height=h, 
+                                                        batch_size=batch_size,
+                                                        num_images_per_prompt=1, 
+                                                        device='cuda', 
+                                                        dtype=get_torch_dtype(self.dtype), 
+                                                        num_channels_latents=ch
+                                                        )
 
                 controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
                     latent_model_input,
                     timestep=timestep,
                     encoder_hidden_states=text_embeddings.text_embeds,
-                    controlnet_cond=edge_maps,
+                    controlnet_cond=prepared_control_image,
                     return_dict=False,
                 )
 

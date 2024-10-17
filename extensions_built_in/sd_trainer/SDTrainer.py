@@ -925,7 +925,7 @@ class SDTrainer(BaseSDTrainProcess):
             timesteps: Union[int, torch.Tensor] = 1,
             conditional_embeds: Union[PromptEmbeds, None] = None,
             unconditional_embeds: Union[PromptEmbeds, None] = None,
-            edge_maps: Union[torch.Tensor, None] = None,
+            edge_maps: Union[List[torch.Tensor], None] = None,
             **kwargs,
     ):
         dtype = get_torch_dtype(self.train_config.dtype)
@@ -947,9 +947,6 @@ class SDTrainer(BaseSDTrainProcess):
         dtype = get_torch_dtype(self.train_config.dtype)
 
         edge_maps = batch.get_edge_map_list()
-   
-        if edge_maps:
-            edge_maps = torch.stack(edge_maps).to(self.device_torch, dtype=dtype)
    
         # sanity check
         if self.sd.vae.dtype != self.sd.vae_torch_dtype:
