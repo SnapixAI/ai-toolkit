@@ -1676,16 +1676,23 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 # hit the end of an epoch, reset
                                 self.progress_bar.pause()
                                 dataloader_iterator_reg = iter(dataloader_reg)
+                                print(f"Resetting reg dataloader1")
                                 trigger_dataloader_setup_epoch(dataloader_reg)
+                                print(f"Resetting reg dataloader2")
 
+                            print(f"Getting batch from reg dataloader")
                             with self.timer('get_batch:reg'):
                                 batch = next(dataloader_iterator_reg)
+                            print(f"Got batch from reg dataloader1")
                             self.progress_bar.unpause()
+                            print(f"Got batch from reg dataloader2")
                         is_reg_step = True
                     elif dataloader is not None:
                         try:
                             with self.timer('get_batch'):
+                                print(f"Getting batch from dataloader3")
                                 batch = next(dataloader_iterator)
+                                print(f"Got batch from dataloader4")
                         except StopIteration:
                             with self.timer('reset_batch'):
                                 # hit the end of an epoch, reset
@@ -1721,15 +1728,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
             # flush()
             ### HOOK ###
+            print(f"Calling hook_train_loop")
             loss_dict = self.hook_train_loop(batch_list)
+            print(f"Called hook_train_loop")
             self.timer.stop('train_loop')
             if not did_first_flush:
                 flush()
                 did_first_flush = True
+            print(f"Flushed")
             # flush()
             # setup the networks to gradient checkpointing and everything works
             if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
                 self.adapter.clear_memory()
+            print(f"Cleared adapter memory")
 
             with torch.no_grad():
                 # torch.cuda.empty_cache()
