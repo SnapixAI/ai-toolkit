@@ -62,7 +62,7 @@ from huggingface_hub import hf_hub_download
 from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
 from typing import TYPE_CHECKING
 
-from diffusers import FluxControlNetPipeline, FluxControlNetModel
+from diffusers import FluxControlNetPipeline, FluxControlNetModel,FluxControlNetModel
 
 
 if TYPE_CHECKING:
@@ -198,10 +198,7 @@ class StableDiffusion:
         dtype = get_torch_dtype(self.dtype)
 
         print("loading controlnet")
-        self.controlnet = FluxControlNetModel.from_pretrained(
-            "XLabs-AI/flux-controlnet-canny-v3",
-            torch_dtype=self.torch_dtype
-        )
+        self.controlnet = ControlNetModel.from_pretrained("XLabs-AI/flux-controlnet-canny-diffusers")
 
         # move the betas alphas and  alphas_cumprod to device. Sometimed they get stuck on cpu, not sure why
         # self.noise_scheduler.betas = self.noise_scheduler.betas.to(self.device_torch)
