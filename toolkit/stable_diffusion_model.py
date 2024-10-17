@@ -133,7 +133,11 @@ class ControlImagePreparer:
         """
         if not isinstance(image, torch.Tensor):
             image = self.image_processor.preprocess(image, height=height, width=width)
-        
+
+        # Ensure the image has 4 dimensions: (batch_size, num_channels, height, width)
+        if image.ndim == 3:  # if it's missing the channel dimension
+            image = image.unsqueeze(1)  # Add a channel dimension, assuming grayscale
+
         image_batch_size = image.shape[0]
         repeat_by = batch_size if image_batch_size == 1 else num_images_per_prompt
         image = image.repeat_interleave(repeat_by, dim=0)
@@ -141,7 +145,7 @@ class ControlImagePreparer:
 
         if do_classifier_free_guidance and not guess_mode:
             image = torch.cat([image] * 2)
-        
+
         return image
 
     def encode_image(self, image, batch_size, num_images_per_prompt, device, dtype, num_channels_latents):
@@ -1917,7 +1921,7 @@ class StableDiffusion:
                                                         num_images_per_prompt=1, 
                                                         device='cuda', 
                                                         dtype=get_torch_dtype(self.dtype), 
-                                                        num_channels_latents=4
+                                                        num_channels_latents=ch
                                                         )
 
                 controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
