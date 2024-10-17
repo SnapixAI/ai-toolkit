@@ -73,19 +73,14 @@ class EdgeMapFileItemDTOMixin:
         self.canny_threshold1 = 100
         self.canny_threshold2 = 200
         dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
-        
-        if dataset_config.edge_map_path is not None:
-            img_path = kwargs.get('path', None)
-            file_name = os.path.basename(img_path)
-            file_dir = os.path.dirname(img_path)
-            file_name_without_ext = os.path.splitext(file_name)[0]
-            self.edge_map_path = os.path.join(file_dir, self.edge_map_cache_dir, f"{file_name_without_ext}_edge.png")
-            self.has_edge_map = True
+
+        img_path = kwargs.get('path', None)
+        file_name = os.path.basename(img_path)
+        file_dir = os.path.dirname(img_path)
+        file_name_without_ext = os.path.splitext(file_name)[0]
+        self.edge_map_path = os.path.join(file_dir, self.edge_map_cache_dir, f"{file_name_without_ext}_edge.png")
 
     def load_edge_map(self: 'FileItemDTO'):
-        if not self.has_edge_map:
-            return
-
         if not os.path.exists(self.edge_map_path):
             # Generate and save the edge map if it doesn't exist
             img = self.load_image(self.path)

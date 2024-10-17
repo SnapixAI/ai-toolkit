@@ -529,8 +529,7 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
         file_item.load_caption(self.caption_dict)
         
         # Load edge map
-        edge_map = self.load_edge_map(file_item)
-        file_item.edge_map = edge_map
+        file_item.load_edge_map()
         
         return file_item
 
