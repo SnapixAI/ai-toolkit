@@ -1733,6 +1733,7 @@ class StableDiffusion:
                 print(f"timestep: {timestep.shape}")
                 print(f"text_embeddings.text_embeds: {text_embeddings.text_embeds.shape}")
                 print(f"edge_maps: {edge_maps.shape}")
+                print("dtype", self.torch_dtype)
 
                 controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
                     latent_model_input,
