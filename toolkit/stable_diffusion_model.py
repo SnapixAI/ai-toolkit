@@ -1917,7 +1917,7 @@ class StableDiffusion:
                                                         num_images_per_prompt=1, 
                                                         device='cuda', 
                                                         dtype=get_torch_dtype(self.dtype), 
-                                                        num_channels_latents=ch
+                                                        num_channels_latents=3
                                                         )
 
                 controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
