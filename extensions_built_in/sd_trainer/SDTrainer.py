@@ -944,11 +944,13 @@ class SDTrainer(BaseSDTrainProcess):
     def train_single_accumulation(self, batch: DataLoaderBatchDTO):
         self.timer.start('preprocess_batch')
         batch = self.preprocess_batch(batch)
+        dtype = get_torch_dtype(self.train_config.dtype)
 
+        edge_maps = batch.get_edge_map_list()
+   
         if edge_maps:
             edge_maps = torch.stack(edge_maps).to(self.device_torch, dtype=dtype)
-    
-        dtype = get_torch_dtype(self.train_config.dtype)
+   
         # sanity check
         if self.sd.vae.dtype != self.sd.vae_torch_dtype:
             self.sd.vae = self.sd.vae.to(self.sd.vae_torch_dtype)
