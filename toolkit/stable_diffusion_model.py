@@ -1928,6 +1928,13 @@ class StableDiffusion:
                                                         num_channels_latents=ch
                                                         )
 
+                # print shapes
+                print("Shapes before ControlNet:")
+                print(f"latent_model_input: {latent_model_input.shape}")
+                print(f"timestep: {timestep.shape}")
+                print(f"text_embeddings.text_embeds: {text_embeddings.text_embeds.shape}")
+                print(f"prepared_control_image: {prepared_control_image.shape}")
+
                 controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
                     latent_model_input,
                     timestep=timestep,
