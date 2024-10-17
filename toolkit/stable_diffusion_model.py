@@ -138,6 +138,10 @@ class ControlImagePreparer:
         if image.ndim == 3:  # if it's missing the channel dimension
             image = image.unsqueeze(1)  # Add a channel dimension, assuming grayscale
 
+        # If the image has 1 channel, convert it to 3 channels by repeating the channel
+        if image.shape[1] == 1:  # Check if it's a single-channel image (grayscale)
+            image = image.repeat(1, 3, 1, 1)  # Repeat the channel 3 times to convert to RGB
+
         image_batch_size = image.shape[0]
         repeat_by = batch_size if image_batch_size == 1 else num_images_per_prompt
         image = image.repeat_interleave(repeat_by, dim=0)
