@@ -2,6 +2,7 @@ import os
 import time
 from typing import List, Optional, Literal, Union, TYPE_CHECKING, Dict
 import random
+from PIL import Image
 
 import torch
 
