@@ -233,7 +233,7 @@ class ControlImagePreparer:
                     dtype=dtype
                 )
 
-                if self.controlnet.input_hint_block is None:
+                if not hasattr(self.controlnet, 'input_hint_block') or self.controlnet.input_hint_block is None:
                     control_image = self.encode_image(
                         image=control_image,
                         batch_size=1,
@@ -263,7 +263,7 @@ class ControlImagePreparer:
                 dtype=dtype
             )
 
-            if self.controlnet.input_hint_block is None:
+            if not hasattr(self.controlnet, 'input_hint_block') or self.controlnet.input_hint_block is None:
                 control_image = self.encode_image(
                     image=control_image,
                     batch_size=batch_size,
