@@ -1621,6 +1621,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.lr_scheduler.step(self.step_num)
 
         self.sd.set_device_state(self.train_device_state_preset)
+        print(f"Setting device state to {self.train_device_state_preset}")
         flush()
         # self.step_num = 0
 
@@ -1636,6 +1637,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ###################################################################
 
 
+        print(f"Starting training loop")
         start_step_num = self.step_num
         did_first_flush = False
         for step in range(start_step_num, self.train_config.steps):
@@ -1650,6 +1652,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.sd.pipeline.enable_freeu(s1=0.9, s2=0.2, b1=1.1, b2=1.2)
             self.progress_bar.unpause()
             with torch.no_grad():
+                print(f"Starting step {step}")
                 # if is even step and we have a reg dataset, use that
                 # todo improve this logic to send one of each through if we can buckets and batch size might be an issue
                 is_reg_step = False
