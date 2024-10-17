@@ -1923,7 +1923,7 @@ class StableDiffusion:
                                                         height=h, 
                                                         batch_size=batch_size,
                                                         num_images_per_prompt=1, 
-                                                        device='cuda', 
+                                                        device=self.vae.device, 
                                                         dtype=get_torch_dtype(self.dtype), 
                                                         num_channels_latents=ch
                                                         )
