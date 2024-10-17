@@ -68,7 +68,7 @@ class EdgeMapFileItemDTOMixin:
             super().__init__(*args, **kwargs)
         self.has_edge_map = False
         self.edge_map_tensor: Union[torch.Tensor, None] = None
-        self.edge_map_cache_dir = '_edge_map_cache'
+        self.edge_map_cache_dir = '/workspace/_edge_map_cache'
         self.edge_detection_method = 'canny'  # Default method
         self.canny_threshold1 = 100
         self.canny_threshold2 = 200
