@@ -84,7 +84,8 @@ class EdgeMapFileItemDTOMixin:
         if not os.path.exists(self.edge_map_path):
             # Generate and save the edge map if it doesn't exist
             img = self.load_image(self.path)
-            edge_map = self.generate_edge_map(input_image=img, output_type="np")
+            resolution = self.dataset_config.resolution
+            edge_map = self.generate_edge_map(input_image=img, output_type="np", detect_resolution=resolution, image_resolution=resolution)
             os.makedirs(os.path.dirname(self.edge_map_path), exist_ok=True)
             cv2.imwrite(self.edge_map_path, edge_map)
         else:
@@ -106,7 +107,7 @@ class EdgeMapFileItemDTOMixin:
         img = img.convert('RGB')
         return np.array(img)
 
-    def generate_edge_map(self, input_image=None, detect_resolution=1024, image_resolution=1024, output_type=None, **kwargs):
+    def generate_edge_map(self, input_image=None, detect_resolution=768, image_resolution=768, output_type=None, **kwargs):
         if "img" in kwargs:
             warnings.warn("img is deprecated, please use `input_image=...` instead.", DeprecationWarning)
             input_image = kwargs.pop("img")
@@ -159,7 +160,8 @@ class EdgeMapCachingMixin:
                 # Load the image
                 img = np.array(Image.open(file_item.path).convert('RGB'))
                 # Generate the edge map
-                edge_map = file_item.generate_edge_map(img)
+                resolution = self.dataset_config.resolution
+                edge_map = file_item.generate_edge_map(img,detect_resolution=resolution,image_resolution=resolution)
                 # Save the edge map
                 os.makedirs(os.path.dirname(file_item.edge_map_path), exist_ok=True)
                 cv2.imwrite(file_item.edge_map_path, edge_map)

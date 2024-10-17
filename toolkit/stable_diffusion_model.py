@@ -198,7 +198,9 @@ class StableDiffusion:
         dtype = get_torch_dtype(self.dtype)
 
         print("loading controlnet")
-        self.controlnet = FluxControlNetModel.from_pretrained("XLabs-AI/flux-controlnet-canny-diffusers")
+        self.controlnet = FluxControlNetModel.from_pretrained("XLabs-AI/flux-controlnet-canny-diffusers",
+                                                torch_dtype=dtype, use_safetensors=True)
+        self.controlnet.to(self.device_torch, dtype=dtype)
 
         # move the betas alphas and  alphas_cumprod to device. Sometimed they get stuck on cpu, not sure why
         # self.noise_scheduler.betas = self.noise_scheduler.betas.to(self.device_torch)
@@ -650,7 +652,6 @@ class StableDiffusion:
             text_encoder.to(self.device_torch, dtype=dtype)
 
             print("making pipe")
-            print("controlnet", self.controlnet)
             pipe: FluxPipeline = FluxControlNetPipeline(
                 scheduler=scheduler,
                 text_encoder=text_encoder,
@@ -1694,15 +1695,24 @@ class StableDiffusion:
                     noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
 
         else:
+            if edge_maps is not None:
+                edge_maps = edge_maps.to(self.device_torch, dtype=self.torch_dtype)
+
             with torch.no_grad():
                 if do_classifier_free_guidance:
                     # if we are doing classifier free guidance, need to double up
                     latent_model_input = torch.cat([latents] * 2, dim=0)
                     timestep = torch.cat([timestep] * 2)
+                    if edge_maps is not None:
+                        # print shape before and after
+                        edge_maps = torch.cat([edge_maps] * 2, dim=0)
                 else:
                     latent_model_input = latents
 
                 latent_model_input = scale_model_input(latent_model_input, timestep)
+
+                # print shape before and after
+                edge_maps = scale_model_input(edge_maps, timestep)
 
                 # check if we need to concat timesteps
                 if isinstance(timestep, torch.Tensor) and len(timestep.shape) > 1:
@@ -1717,24 +1727,26 @@ class StableDiffusion:
                                 f"Batch size of latents {latent_model_input.shape[0]} must be the same or half the batch size of timesteps {timestep.shape[0]}")
 
             if self.controlnet and edge_maps is not None:
-                # Ensure edge_maps are on the correct device and dtype
-                edge_maps = edge_maps.to(self.device_torch, dtype=self.torch_dtype)
-                
-                # If we're doing classifier free guidance, we need to repeat the control image
-                if do_classifier_free_guidance:
-                    edge_maps = torch.cat([edge_maps] * 2, dim=0)
-                
-                # Get the additional residuals from the controlnet
+                # Print shapes before ControlNet
+                print("Shapes before ControlNet:")
+                print(f"latent_model_input: {latent_model_input.shape}")
+                print(f"timestep: {timestep.shape}")
+                print(f"text_embeddings.text_embeds: {text_embeddings.text_embeds.shape}")
+                print(f"edge_maps: {edge_maps.shape}")
+
                 controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
                     latent_model_input,
-                    timestep,
+                    timestep=timestep,
                     encoder_hidden_states=text_embeddings.text_embeds,
                     controlnet_cond=edge_maps,
                     return_dict=False,
                 )
-                # Add the residuals to the kwargs
-                # kwargs['down_block_additional_residuals'] = down_block_res_samples
-                # kwargs['mid_block_additional_residual'] = mid_block_res_sample
+
+                # Print shapes after ControlNet
+                print("Shapes after ControlNet:")
+                print(f"controlnet_block_samples: {[sample.shape for sample in controlnet_block_samples]}")
+                print(f"controlnet_single_block_samples: {controlnet_single_block_samples.shape}")
+
                 kwargs['controlnet_block_samples'] = controlnet_block_samples
                 kwargs['controlnet_single_block_samples'] = controlnet_single_block_samples
 
