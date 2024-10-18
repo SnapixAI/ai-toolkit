@@ -1941,18 +1941,25 @@ class StableDiffusion:
 
                     cast_dtype = self.unet.dtype
                     # with torch.amp.autocast(device_type='cuda', dtype=cast_dtype):
-                    controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
-                        hidden_states=latent_model_input_packed.to(self.device_torch, cast_dtype),  # [1, 4096, 64]
-                        timestep=timestep / 1000,  # timestep is 1000 scale
-                        encoder_hidden_states=text_embeddings.text_embeds.to(self.device_torch, cast_dtype),
-                        controlnet_cond=edge_maps.reshape(latent_model_input.shape[0], -1, 64).to(self.device_torch, self.torch_dtype),
-                        pooled_projections=text_embeddings.pooled_embeds.to(self.device_torch, cast_dtype),  # [1, 768]
-                        txt_ids=txt_ids,  # [1, 512, 3]
-                        img_ids=img_ids,  # [1, 4096, 3]
-                        guidance=guidance,
-                        conditioning_scale=self.controlnet_conditioning_scale,
-                        return_dict=False
-                    )
+                    use_controlnet = random.random() > 0.3
+
+                    if use_controlnet and self.controlnet:
+                        controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+                            hidden_states=latent_model_input_packed.to(self.device_torch, cast_dtype),
+                            timestep=timestep / 1000, # timestep is 1000 scale
+                            encoder_hidden_states=text_embeddings.text_embeds.to(self.device_torch, cast_dtype),
+                            controlnet_cond=edge_maps.reshape(latent_model_input.shape[0], -1, 64).to(self.device_torch, self.torch_dtype),
+                            pooled_projections=text_embeddings.pooled_embeds.to(self.device_torch, cast_dtype),
+                            txt_ids=txt_ids, # [1, 512, 3]
+                            img_ids=img_ids, # [1, 4096, 3]
+                            guidance=guidance,
+                            conditioning_scale=self.controlnet_conditioning_scale,
+                            return_dict=False
+                        )
+                    else:
+                        controlnet_block_samples = None
+                        controlnet_single_block_samples = None
+
                     noise_pred = self.unet(
                         hidden_states=latent_model_input_packed.to(self.device_torch, cast_dtype),  # [1, 4096, 64]
                         # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
