@@ -1634,9 +1634,8 @@ class SDTrainer(BaseSDTrainProcess):
                 with self.timer('ema_update'):
                     self.ema.update()
         else:
-
-        with self.timer('scheduler_step'):
-            self.lr_scheduler.step()
+            with self.timer('scheduler_step'):
+                self.lr_scheduler.step()
 
         if self.embedding is not None:
             with self.timer('restore_embeddings'):
