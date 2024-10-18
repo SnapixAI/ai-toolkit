@@ -1201,7 +1201,7 @@ class StableDiffusion:
 
                     if self.controlnet:
                         extra['control_image'] = gen_config.control_image
-                        extra['controlnet_conditioning_scale'] = gen_config.controlnet_conditioning_scale
+                        extra['conditioning_scale'] = gen_config.controlnet_conditioning_scale
                         extra['control_guidance_start'] = gen_config.control_guidance_start
                         extra['control_guidance_end'] = gen_config.control_guidance_end
 
@@ -1950,7 +1950,7 @@ class StableDiffusion:
                         txt_ids=txt_ids,  # [1, 512, 3]
                         img_ids=img_ids,  # [1, 4096, 3]
                         guidance=guidance,
-                        controlnet_conditioning_scale=self.controlnet_conditioning_scale,
+                        conditioning_scale=self.controlnet_conditioning_scale,
                         return_dict=False
                     )
                     noise_pred = self.unet(
