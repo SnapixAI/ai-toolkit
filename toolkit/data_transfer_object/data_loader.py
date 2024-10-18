@@ -9,7 +9,7 @@ from PIL import Image
 from PIL.ImageOps import exif_transpose
 
 from toolkit import image_utils
-from toolkit.dataloader_mixins import CaptionProcessingDTOMixin, ImageProcessingDTOMixin, LatentCachingFileItemDTOMixin, \
+from toolkit.dataloader_mixins import CaptionProcessingDTOMixin, EdgeMapFileItemDTOMixin, ImageProcessingDTOMixin, LatentCachingFileItemDTOMixin, \
     ControlFileItemDTOMixin, ArgBreakMixin, PoiFileItemDTOMixin, MaskFileItemDTOMixin, AugmentationFileItemDTOMixin, \
     UnconditionalFileItemDTOMixin, ClipImageFileItemDTOMixin
 
@@ -30,6 +30,7 @@ def print_once(msg):
 
 class FileItemDTO(
     LatentCachingFileItemDTOMixin,
+    EdgeMapFileItemDTOMixin,
     CaptionProcessingDTOMixin,
     ImageProcessingDTOMixin,
     ControlFileItemDTOMixin,
@@ -237,6 +238,9 @@ class DataLoaderBatchDTO:
             add_if_not_present=True
     ):
         return [x.caption_short for x in self.file_items]
+    
+    def get_edge_map_list(self,vae):
+        return [x.load_edge_map_latent(vae) for x in self.file_items]
 
     def cleanup(self):
         del self.latents

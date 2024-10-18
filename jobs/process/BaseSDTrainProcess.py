@@ -1621,6 +1621,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.lr_scheduler.step(self.step_num)
 
         self.sd.set_device_state(self.train_device_state_preset)
+        print(f"Setting device state to {self.train_device_state_preset}")
         flush()
         # self.step_num = 0
 
@@ -1636,6 +1637,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ###################################################################
 
 
+        print(f"Starting training loop")
         start_step_num = self.step_num
         did_first_flush = False
         for step in range(start_step_num, self.train_config.steps):
@@ -1673,11 +1675,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 # hit the end of an epoch, reset
                                 self.progress_bar.pause()
                                 dataloader_iterator_reg = iter(dataloader_reg)
+                                print(f"Resetting reg dataloader1")
                                 trigger_dataloader_setup_epoch(dataloader_reg)
+                                print(f"Resetting reg dataloader2")
 
+                            print(f"Getting batch from reg dataloader")
                             with self.timer('get_batch:reg'):
                                 batch = next(dataloader_iterator_reg)
+                            print(f"Got batch from reg dataloader1")
                             self.progress_bar.unpause()
+                            print(f"Got batch from reg dataloader2")
                         is_reg_step = True
                     elif dataloader is not None:
                         try:
