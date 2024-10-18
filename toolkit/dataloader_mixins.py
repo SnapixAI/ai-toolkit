@@ -88,10 +88,10 @@ class EdgeMapFileItemDTOMixin:
         file_dir = os.path.dirname(img_path)
         file_name_without_ext = os.path.splitext(file_name)[0]
         self.edge_map_path = os.path.join(
-            file_dir, self.edge_map_cache_dir, f"{file_name_without_ext}_edge.png"
+            self.edge_map_cache_dir, f"{file_name_without_ext}_edge.png"
         )
         self.edge_map_latent_path = os.path.join(
-            file_dir, self.edge_map_latent_cache_dir, f"{file_name_without_ext}_edge_latent.safetensors"
+            self.edge_map_latent_cache_dir, f"{file_name_without_ext}_edge_latent.safetensors"
         )
 
     def load_edge_map(self: 'FileItemDTO'):
@@ -227,7 +227,6 @@ class EdgeMapCachingMixin:
             super().__init__(**kwargs)
         self.edge_detection_method = kwargs.get('edge_detection_method', 'canny')
         self.edge_map_format = kwargs.get('edge_map_format', 'RGB')  # Configurable format
-        # self.should_cache_edge_map_latents = kwargs.get('should_cache_edge_map_latents', False)
         self.should_cache_edge_map_latents = True
 
     def cache_edge_maps(self: 'AiToolkitDataset'):
@@ -238,7 +237,10 @@ class EdgeMapCachingMixin:
             if not file_item.has_edge_map:
                 continue
 
-            if not os.path.exists(file_item.edge_map_path):
+            edge_map_path = file_item.edge_map_path
+            edge_map_latent_path = file_item.edge_map_latent_path
+
+            if not os.path.exists(edge_map_path):
                 # Load the image
                 img = np.array(Image.open(file_item.path).convert('RGB'))
                 # Generate the edge map
@@ -247,20 +249,27 @@ class EdgeMapCachingMixin:
                     img, detect_resolution=resolution, image_resolution=resolution
                 )
                 # Save the edge map
-                os.makedirs(
-                    os.path.dirname(file_item.edge_map_path), exist_ok=True
-                )
+                os.makedirs(os.path.dirname(edge_map_path), exist_ok=True)
                 edge_map_pil = Image.fromarray(
                     edge_map.astype('uint8'), file_item.edge_map_format
                 )
-                edge_map_pil.save(file_item.edge_map_path)
+                edge_map_pil.save(edge_map_path)
 
-            if self.should_cache_edge_map_latents and not os.path.exists(file_item.edge_map_latent_path):
-                file_item.load_edge_map_latent(self.sd.vae)
+            # Verify that the files were created
+            if not os.path.exists(edge_map_path):
+                print(f"Warning: Failed to create edge map for {file_item.path}")
+            if self.should_cache_edge_map_latents and not os.path.exists(edge_map_latent_path):
+                print(f"Warning: Failed to create edge map latent for {file_item.path}")
+
+        # Final verification
+        uncached_edge_maps = [f for f in self.file_list if f.has_edge_map and not os.path.exists(f.edge_map_path)]
+
+        if uncached_edge_maps:
+            print(f"Warning: {len(uncached_edge_maps)} edge maps were not cached.")
+
+        print("Edge map caching completed.")
 
     def cache_edge_map_latents(self: 'AiToolkitDataset'):
-        print(f"Caching edge map latents for {self.dataset_path}")
-
         # Use tqdm to show progress
         for file_item in tqdm(self.file_list, desc='Caching edge map latents'):
             if not file_item.has_edge_map:

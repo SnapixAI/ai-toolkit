@@ -511,6 +511,7 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
                 self.cache_clip_vision_to_disk()
 
             self.cache_edge_maps()
+            self.cache_edge_map_latents()
         else:
             if self.dataset_config.poi is not None:
                 # handle cropping to a specific point of interest
@@ -527,9 +528,6 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
         file_item = copy.deepcopy(self.file_list[index])
         file_item.load_and_process_image(self.transform)
         file_item.load_caption(self.caption_dict)
-        
-        # Load edge map
-        file_item.load_edge_map_latent(self.sd.vae)
         
         return file_item
 
