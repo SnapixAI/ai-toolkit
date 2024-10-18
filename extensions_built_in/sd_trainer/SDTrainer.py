@@ -946,8 +946,8 @@ class SDTrainer(BaseSDTrainProcess):
         batch = self.preprocess_batch(batch)
         dtype = get_torch_dtype(self.train_config.dtype)
 
-        edge_maps = batch.get_edge_map_list()
-   
+        edge_maps = batch.get_edge_map_list(self.sd.vae)
+
         # sanity check
         if self.sd.vae.dtype != self.sd.vae_torch_dtype:
             self.sd.vae = self.sd.vae.to(self.sd.vae_torch_dtype)
@@ -1540,7 +1540,6 @@ class SDTrainer(BaseSDTrainProcess):
                 self.before_unet_predict()
                 # do a prior pred if we have an unconditional image, we will swap out the giadance later
                 if batch.unconditional_latents is not None or self.do_guided_loss:
-                    # do guided loss
                     loss = self.get_guided_loss(
                         noisy_latents=noisy_latents,
                         conditional_embeds=conditional_embeds,
@@ -1560,8 +1559,7 @@ class SDTrainer(BaseSDTrainProcess):
                         if unconditional_embeds is not None:
                             unconditional_embeds = unconditional_embeds.to(self.device_torch, dtype=dtype).detach()
                         noise_pred = self.predict_noise(
-                            noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
-                            timesteps=timesteps,
+                            noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),                            timesteps=timesteps,
                             conditional_embeds=conditional_embeds.to(self.device_torch, dtype=dtype),
                             unconditional_embeds=unconditional_embeds,
                             edge_maps=edge_maps,  # Add this line
@@ -1582,21 +1580,11 @@ class SDTrainer(BaseSDTrainProcess):
                         )
                 # check if nan
                 if torch.isnan(loss):
-                    print("loss is nan")
+                    print("Warning: Loss is NaN, setting to zero")
                     loss = torch.zeros_like(loss).requires_grad_(True)
 
                 with self.timer('backward'):
-                    # todo we have multiplier seperated. works for now as res are not in same batch, but need to change
                     loss = loss * loss_multiplier.mean()
-                    # IMPORTANT if gradient checkpointing do not leave with network when doing backward
-                    # it will destroy the gradients. This is because the network is a context manager
-                    # and will change the multipliers back to 0.0 when exiting. They will be
-                    # 0.0 for the backward pass and the gradients will be 0.0
-                    # I spent weeks on fighting this. DON'T DO IT
-                    # with fsdp_overlap_step_with_backward():
-                    # if self.is_bfloat:
-                    # loss.backward()
-                    # else:
                     if not self.do_grad_scale:
                         loss.backward()
                     else:
@@ -1612,7 +1600,8 @@ class SDTrainer(BaseSDTrainProcess):
             batch_list = [batch]
         total_loss = None
         self.optimizer.zero_grad()
-        for batch in batch_list:
+        
+        for i, batch in enumerate(batch_list):
             loss = self.train_single_accumulation(batch)
             if total_loss is None:
                 total_loss = loss
@@ -1621,9 +1610,7 @@ class SDTrainer(BaseSDTrainProcess):
             if len(batch_list) > 1 and self.model_config.low_vram:
                 torch.cuda.empty_cache()
 
-
         if not self.is_grad_accumulation_step:
-            # fix this for multi params
             if self.train_config.optimizer != 'adafactor':
                 if self.do_grad_scale:
                     self.scaler.unscale_(self.optimizer)
@@ -1632,9 +1619,8 @@ class SDTrainer(BaseSDTrainProcess):
                         torch.nn.utils.clip_grad_norm_(self.params[i]['params'], self.train_config.max_grad_norm)
                 else:
                     torch.nn.utils.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
-            # only step if we are not accumulating
+            
             with self.timer('optimizer_step'):
-                # self.optimizer.step()
                 if not self.do_grad_scale:
                     self.optimizer.step()
                 else:
@@ -1648,10 +1634,7 @@ class SDTrainer(BaseSDTrainProcess):
                 with self.timer('ema_update'):
                     self.ema.update()
         else:
-            # gradient accumulation. Just a place for breakpoint
-            pass
 
-        # TODO Should we only step scheduler on grad step? If so, need to recalculate last step
         with self.timer('scheduler_step'):
             self.lr_scheduler.step()
 
@@ -1665,9 +1648,8 @@ class SDTrainer(BaseSDTrainProcess):
                 self.adapter.restore_embeddings()
 
         loss_dict = OrderedDict(
-            {'loss': loss.item()}
+            {'loss': total_loss.item()}
         )
-
         self.end_of_training_loop()
 
         return loss_dict

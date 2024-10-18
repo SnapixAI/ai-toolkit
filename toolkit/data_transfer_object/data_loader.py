@@ -239,8 +239,8 @@ class DataLoaderBatchDTO:
     ):
         return [x.caption_short for x in self.file_items]
     
-    def get_edge_map_list(self):
-        return [x.edge_map_tensor for x in self.file_items]
+    def get_edge_map_list(self,vae):
+        return [x.load_edge_map_latent(vae) for x in self.file_items]
 
     def cleanup(self):
         del self.latents
