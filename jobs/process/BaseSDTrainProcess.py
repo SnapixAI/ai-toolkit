@@ -1690,9 +1690,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     elif dataloader is not None:
                         try:
                             with self.timer('get_batch'):
-                                print(f"Getting batch from dataloader3")
                                 batch = next(dataloader_iterator)
-                                print(f"Got batch from dataloader4")
                         except StopIteration:
                             with self.timer('reset_batch'):
                                 # hit the end of an epoch, reset
@@ -1728,9 +1726,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
             # flush()
             ### HOOK ###
-            print(f"Calling hook_train_loop")
             loss_dict = self.hook_train_loop(batch_list)
-            print(f"Called hook_train_loop")
             self.timer.stop('train_loop')
             if not did_first_flush:
                 flush()
