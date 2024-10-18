@@ -222,12 +222,13 @@ class EdgeMapFileItemDTOMixin:
         return self.edge_map_latent
 
 class EdgeMapCachingMixin:
+    should_cache_edge_map_latents = True
+
     def __init__(self: 'AiToolkitDataset', **kwargs):
         if hasattr(super(), '__init__'):
             super().__init__(**kwargs)
         self.edge_detection_method = kwargs.get('edge_detection_method', 'canny')
         self.edge_map_format = kwargs.get('edge_map_format', 'RGB')  # Configurable format
-        self.should_cache_edge_map_latents = True
 
     def cache_edge_maps(self: 'AiToolkitDataset'):
         print(f"Caching edge maps for {self.dataset_path}")
@@ -260,8 +261,6 @@ class EdgeMapCachingMixin:
                 print(f"Warning: Failed to create edge map for {file_item.path}")
             else:
                 file_item.has_edge_map = True
-            if self.should_cache_edge_map_latents and not os.path.exists(edge_map_latent_path):
-                print(f"Warning: Failed to create edge map latent for {file_item.path}")
 
         # Final verification
         uncached_edge_maps = [f for f in self.file_list if f.has_edge_map and not os.path.exists(f.edge_map_path)]
@@ -279,10 +278,6 @@ class EdgeMapCachingMixin:
 
             if not os.path.exists(file_item.edge_map_latent_path):
                 file_item.load_edge_map_latent(self.sd.vae)
-
-            # Clean up to save memory
-            file_item.cleanup_edge_map()
-    # You might want to add more methods here for managing edge maps at the dataset level
 
 # def get_associated_caption_from_img_path(img_path):
 # https://demo.albumentations.ai/
