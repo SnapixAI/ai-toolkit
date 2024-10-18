@@ -258,6 +258,8 @@ class EdgeMapCachingMixin:
             # Verify that the files were created
             if not os.path.exists(edge_map_path):
                 print(f"Warning: Failed to create edge map for {file_item.path}")
+            else:
+                file_item.has_edge_map = True
             if self.should_cache_edge_map_latents and not os.path.exists(edge_map_latent_path):
                 print(f"Warning: Failed to create edge map latent for {file_item.path}")
 
