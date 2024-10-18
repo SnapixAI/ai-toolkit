@@ -398,6 +398,7 @@ class TrainConfig:
 class ModelConfig:
     def __init__(self, **kwargs):
         self.name_or_path: str = kwargs.get('name_or_path', None)
+        self.control_image: str = kwargs.get('control_image', None)
         self.is_v2: bool = kwargs.get('is_v2', False)
         self.is_xl: bool = kwargs.get('is_xl', False)
         self.is_pixart: bool = kwargs.get('is_pixart', False)

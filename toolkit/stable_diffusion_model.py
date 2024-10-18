@@ -65,6 +65,7 @@ from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
 from typing import TYPE_CHECKING
 
 from diffusers import FluxControlNetPipeline, FluxControlNetModel
+from diffusers.utils import load_image
 
 
 if TYPE_CHECKING:
@@ -1099,7 +1100,6 @@ class StableDiffusion:
                     )
 
                 else:
-                    print("controlnet", self.controlnet)
                     pipeline = FluxControlNetPipeline(
                         vae=self.vae,
                         transformer=self.unet,
@@ -1199,11 +1199,11 @@ class StableDiffusion:
 
                     extra = {}
 
-                    if self.controlnet:
-                        extra['control_image'] = gen_config.control_image
+                    # if self.controlnet:
+                        # extra['control_image'] = gen_config.control_image
                         # extra['conditioning_scale'] = gen_config.controlnet_conditioning_scale
-                        extra['control_guidance_start'] = gen_config.control_guidance_start
-                        extra['control_guidance_end'] = gen_config.control_guidance_end
+                        # extra['control_guidance_start'] = gen_config.control_guidance_start
+                        # extra['control_guidance_end'] = gen_config.control_guidance_end
 
                     validation_image = None
                     if self.adapter is not None and gen_config.adapter_image_path is not None:
@@ -1394,20 +1394,43 @@ class StableDiffusion:
                                 **extra
                             ).images[0]
                         else:
+                            cast_dtype = self.unet.dtype
                             controlnet_block_samples, controlnet_single_block_samples = None, None
-                            if self.controlnet:
-                                controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
-                                    timestep=self.noise_scheduler.timesteps / 1000, # timestep is 1000 scale
-                                    encoder_hidden_states=conditional_embeds.text_embeds,
-                                    pooled_projections=conditional_embeds.pooled_embeds,
-                                    conditioning_scale=gen_config.controlnet_conditioning_scale,
-                                    return_dict=False
-                                )
+                            # if self.controlnet:
+                            #     # use image_path in gen_config.control_image, open image and resize to match latent_model_input_packed
+                            #     # print controlnet image path
+                            #     print(f"Controlnet image path: {self.model_config.control_image}")
+                            #     control_image = Image.open(self.model_config.control_image).resize((gen_config.width, gen_config.height))
+                            #     print(f"Control image size: {control_image.size}")
+                            #     control_image = transforms.ToTensor()(control_image)
+                            #     control_image = control_image.to(self.device_torch, dtype=self.torch_dtype)
+                            #     control_image = control_image.unsqueeze(0)
+                            #     print(f"Control image shape: {control_image.shape}")
+                            #     print(f"Latents: {gen_config.latents}")
+                            #     print(f"timestep: {self.noise_scheduler.timesteps}")
+                            #     print(f"encoder_hidden_states: {conditional_embeds.text_embeds}")
+                            #     print(f"pooled_projections: {conditional_embeds.pooled_embeds}")
+                            #     print(f"conditioning_scale: {self.model_config.controlnet_conditioning_scale}")
+                            #     controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+                            #         controlnet_cond=control_image,
+                            #         hidden_states=gen_config.latents,
+                            #         timestep=self.noise_scheduler.timesteps / 1000, # timestep is 1000 scale
+                            #         encoder_hidden_states=conditional_embeds.text_embeds,
+                            #         pooled_projections=conditional_embeds.pooled_embeds,
+                            #         conditioning_scale=self.model_config.controlnet_conditioning_scale,
+                            #         return_dict=False
+                            #     )
+                            #     #print the latents
+                            #     print(f"Latents shape: {gen_config.latents.shape}")
                             img = pipeline(
-                                controlnet_block_samples=controlnet_block_samples,
-                                controlnet_single_block_samples=controlnet_single_block_samples,
+                                # controlnet_block_samples=controlnet_block_samples,
+                                # controlnet_single_block_samples=controlnet_single_block_samples,
                                 prompt_embeds=conditional_embeds.text_embeds,
+                                control_image=load_image(self.model_config.control_image),
                                 pooled_prompt_embeds=conditional_embeds.pooled_embeds,
+                                control_guidance_start=0.2,
+                                control_guidance_end=0.8,
+                                controlnet_conditioning_scale=self.model_config.controlnet_conditioning_scale,
                                 # negative_prompt_embeds=unconditional_embeds.text_embeds,
                                 # negative_pooled_prompt_embeds=unconditional_embeds.pooled_embeds,
                                 height=gen_config.height,
