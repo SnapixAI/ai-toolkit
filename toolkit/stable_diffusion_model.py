@@ -109,10 +109,11 @@ class ControlImagePreparer:
     def preprocess_image(self, image, width, height, batch_size, num_images_per_prompt, device, dtype, do_classifier_free_guidance=False, guess_mode=False):
         if not isinstance(image, torch.Tensor):
             image = self.image_processor.preprocess(image, height=height, width=width)
-        
+
         image_batch_size = image.shape[0]
         repeat_by = batch_size if image_batch_size == 1 else num_images_per_prompt
         image = image.repeat_interleave(repeat_by, dim=0)
+
         image = image.to(device=device, dtype=dtype)
 
         if do_classifier_free_guidance and not guess_mode:
@@ -310,12 +311,13 @@ class StableDiffusion:
     def load_model(self):
         if self.is_loaded:
             return
+        
         dtype = get_torch_dtype(self.dtype)
 
         print("loading controlnet")
         self.controlnet = FluxControlNetModel.from_pretrained("XLabs-AI/flux-controlnet-canny-diffusers",
-                                                torch_dtype=self.torch_dtype, use_safetensors=True)
-        self.controlnet.to(self.device_torch, dtype=self.torch_dtype)
+                                                torch_dtype=dtype, use_safetensors=True)
+        self.controlnet.to(self.device_torch, dtype=dtype)
 
         # move the betas alphas and  alphas_cumprod to device. Sometimed they get stuck on cpu, not sure why
         # self.noise_scheduler.betas = self.noise_scheduler.betas.to(self.device_torch)
@@ -1852,22 +1854,6 @@ class StableDiffusion:
                 # print shapes
                 edge_maps = torch.stack(edge_maps)
 
-                controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
-                    latent_model_input,
-                    timestep=timestep,
-                    encoder_hidden_states=text_embeddings.text_embeds,
-                    controlnet_cond=edge_maps,
-                    return_dict=False,
-                    pooled_projections=text_embeddings.pooled_embeds.to(self.device_torch, self.torch_dtype),
-                )
-
-                # Print shapes after ControlNet
-                print("Shapes after ControlNet:")
-                print(f"controlnet_block_samples: {[sample.shape for sample in controlnet_block_samples]}")
-                print(f"controlnet_single_block_samples: {controlnet_single_block_samples.shape}")
-
-                kwargs['controlnet_block_samples'] = controlnet_block_samples
-                kwargs['controlnet_single_block_samples'] = controlnet_single_block_samples
             # predict the noise residual
             if self.is_pixart:
                 VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
@@ -1954,6 +1940,17 @@ class StableDiffusion:
 
                     cast_dtype = self.unet.dtype
                     # with torch.amp.autocast(device_type='cuda', dtype=cast_dtype):
+                    controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+                        hidden_states=latent_model_input_packed.to(self.device_torch, cast_dtype),  # [1, 4096, 64]
+                        timestep=timestep / 1000,  # timestep is 1000 scale
+                        encoder_hidden_states=text_embeddings.text_embeds.to(self.device_torch, cast_dtype),
+                        controlnet_cond=edge_maps.reshape(latent_model_input.shape[0], -1, 64).to(self.device_torch, self.torch_dtype),
+                        pooled_projections=text_embeddings.pooled_embeds.to(self.device_torch, cast_dtype),  # [1, 768]
+                        txt_ids=txt_ids,  # [1, 512, 3]
+                        img_ids=img_ids,  # [1, 4096, 3]
+                        guidance=guidance,
+                        return_dict=False
+                    )
                     noise_pred = self.unet(
                         hidden_states=latent_model_input_packed.to(self.device_torch, cast_dtype),  # [1, 4096, 64]
                         # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
@@ -1966,6 +1963,8 @@ class StableDiffusion:
                         img_ids=img_ids,  # [1, 4096, 3]
                         guidance=guidance,
                         return_dict=False,
+                        controlnet_block_samples=controlnet_block_samples,
+                        controlnet_single_block_samples=controlnet_single_block_samples,
                         **kwargs,
                     )[0]
 
