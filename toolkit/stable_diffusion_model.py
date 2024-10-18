@@ -1201,7 +1201,7 @@ class StableDiffusion:
 
                     if self.controlnet:
                         extra['control_image'] = gen_config.control_image
-                        extra['conditioning_scale'] = gen_config.controlnet_conditioning_scale
+                        # extra['conditioning_scale'] = gen_config.controlnet_conditioning_scale
                         extra['control_guidance_start'] = gen_config.control_guidance_start
                         extra['control_guidance_end'] = gen_config.control_guidance_end
 
@@ -1394,7 +1394,18 @@ class StableDiffusion:
                                 **extra
                             ).images[0]
                         else:
+                            controlnet_block_samples, controlnet_single_block_samples = None, None
+                            if self.controlnet:
+                                controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+                                    timestep=self.noise_scheduler.timesteps / 1000, # timestep is 1000 scale
+                                    encoder_hidden_states=conditional_embeds.text_embeds,
+                                    pooled_projections=conditional_embeds.pooled_embeds,
+                                    conditioning_scale=gen_config.controlnet_conditioning_scale,
+                                    return_dict=False
+                                )
                             img = pipeline(
+                                controlnet_block_samples=controlnet_block_samples,
+                                controlnet_single_block_samples=controlnet_single_block_samples,
                                 prompt_embeds=conditional_embeds.text_embeds,
                                 pooled_prompt_embeds=conditional_embeds.pooled_embeds,
                                 # negative_prompt_embeds=unconditional_embeds.text_embeds,
