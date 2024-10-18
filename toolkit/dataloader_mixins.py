@@ -70,7 +70,6 @@ class EdgeMapFileItemDTOMixin:
     def __init__(self: 'FileItemDTO', *args, **kwargs):
         if hasattr(super(), '__init__'):
             super().__init__(*args, **kwargs)
-        self.has_edge_map = False
         self.edge_map_tensor: Union[torch.Tensor, None] = None
         self.edge_map_latent: Union[torch.Tensor, None] = None
         self.edge_map_cache_dir = '/workspace/_edge_map_cache'
@@ -93,6 +92,7 @@ class EdgeMapFileItemDTOMixin:
         self.edge_map_latent_path = os.path.join(
             self.edge_map_latent_cache_dir, f"{file_name_without_ext}_edge_latent.safetensors"
         )
+        self.has_edge_map = os.path.exists(self.edge_map_path)
 
     def load_edge_map(self: 'FileItemDTO'):
         if not os.path.exists(self.edge_map_path):
@@ -234,7 +234,7 @@ class EdgeMapCachingMixin:
 
         # Use tqdm to show progress
         for file_item in tqdm(self.file_list, desc='Caching edge maps'):
-            if not file_item.has_edge_map:
+            if file_item.has_edge_map:
                 continue
 
             edge_map_path = file_item.edge_map_path
