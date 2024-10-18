@@ -239,7 +239,6 @@ class EdgeMapCachingMixin:
                 continue
 
             edge_map_path = file_item.edge_map_path
-            edge_map_latent_path = file_item.edge_map_latent_path
 
             if not os.path.exists(edge_map_path):
                 # Load the image

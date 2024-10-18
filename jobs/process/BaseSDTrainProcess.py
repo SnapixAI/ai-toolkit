@@ -1652,7 +1652,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.sd.pipeline.enable_freeu(s1=0.9, s2=0.2, b1=1.1, b2=1.2)
             self.progress_bar.unpause()
             with torch.no_grad():
-                print(f"Starting step {step}")
                 # if is even step and we have a reg dataset, use that
                 # todo improve this logic to send one of each through if we can buckets and batch size might be an issue
                 is_reg_step = False
@@ -1736,7 +1735,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # setup the networks to gradient checkpointing and everything works
             if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
                 self.adapter.clear_memory()
-            print(f"Cleared adapter memory")
 
             with torch.no_grad():
                 # torch.cuda.empty_cache()
