@@ -451,6 +451,7 @@ class ModelConfig:
         self.quantize = kwargs.get("quantize", False)
         self.low_vram = kwargs.get("low_vram", False)
         self.attn_masking = kwargs.get("attn_masking", False)
+        self.controlnet_conditioning_scale = kwargs.get("controlnet_conditioning_scale", 1.0)
         if self.attn_masking and not self.is_flux:
             raise ValueError("attn_masking is only supported with flux models currently")
         pass

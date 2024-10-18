@@ -1730,7 +1730,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if not did_first_flush:
                 flush()
                 did_first_flush = True
-            print(f"Flushed")
             # flush()
             # setup the networks to gradient checkpointing and everything works
             if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):

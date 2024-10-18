@@ -292,6 +292,7 @@ class StableDiffusion:
         self.is_pixart = model_config.is_pixart
         self.is_auraflow = model_config.is_auraflow
         self.is_flux = model_config.is_flux
+        self.controlnet_conditioning_scale = model_config.controlnet_conditioning_scale
 
         self.use_text_encoder_1 = model_config.use_text_encoder_1
         self.use_text_encoder_2 = model_config.use_text_encoder_2
@@ -1949,6 +1950,7 @@ class StableDiffusion:
                         txt_ids=txt_ids,  # [1, 512, 3]
                         img_ids=img_ids,  # [1, 4096, 3]
                         guidance=guidance,
+                        controlnet_conditioning_scale=self.controlnet_conditioning_scale,
                         return_dict=False
                     )
                     noise_pred = self.unet(
