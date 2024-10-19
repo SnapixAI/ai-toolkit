@@ -2,6 +2,7 @@ import os
 import time
 from typing import List, Optional, Literal, Union, TYPE_CHECKING, Dict
 import random
+from PIL import Image
 
 import torch
 
@@ -397,6 +398,7 @@ class TrainConfig:
 class ModelConfig:
     def __init__(self, **kwargs):
         self.name_or_path: str = kwargs.get('name_or_path', None)
+        self.control_image: str = kwargs.get('control_image', None)
         self.is_v2: bool = kwargs.get('is_v2', False)
         self.is_xl: bool = kwargs.get('is_xl', False)
         self.is_pixart: bool = kwargs.get('is_pixart', False)
@@ -450,6 +452,7 @@ class ModelConfig:
         self.quantize = kwargs.get("quantize", False)
         self.low_vram = kwargs.get("low_vram", False)
         self.attn_masking = kwargs.get("attn_masking", False)
+        self.controlnet_conditioning_scale = kwargs.get("controlnet_conditioning_scale", 1.0)
         if self.attn_masking and not self.is_flux:
             raise ValueError("attn_masking is only supported with flux models currently")
         pass
