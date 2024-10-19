@@ -294,6 +294,7 @@ class StableDiffusion:
         self.is_auraflow = model_config.is_auraflow
         self.is_flux = model_config.is_flux
         self.controlnet_conditioning_scale = model_config.controlnet_conditioning_scale
+        print(f"controlnet_conditioning_scale: {self.controlnet_conditioning_scale}")
 
         self.use_text_encoder_1 = model_config.use_text_encoder_1
         self.use_text_encoder_2 = model_config.use_text_encoder_2
@@ -1428,8 +1429,8 @@ class StableDiffusion:
                                 prompt_embeds=conditional_embeds.text_embeds,
                                 control_image=load_image(self.model_config.control_image),
                                 pooled_prompt_embeds=conditional_embeds.pooled_embeds,
-                                control_guidance_start=0.2,
-                                control_guidance_end=0.8,
+                                # control_guidance_start=0.2,
+                                # control_guidance_end=0.8,
                                 controlnet_conditioning_scale=self.model_config.controlnet_conditioning_scale,
                                 # negative_prompt_embeds=unconditional_embeds.text_embeds,
                                 # negative_pooled_prompt_embeds=unconditional_embeds.pooled_embeds,
