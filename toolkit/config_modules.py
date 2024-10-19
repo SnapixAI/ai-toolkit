@@ -2,6 +2,7 @@ import os
 import time
 from typing import List, Optional, Literal, Union, TYPE_CHECKING, Dict
 import random
+from PIL import Image
 
 import torch
 
@@ -57,7 +58,10 @@ class SampleConfig:
         self.refiner_start_at = kwargs.get('refiner_start_at',
                                            0.5)  # step to start using refiner on sample if it exists
         self.extra_values = kwargs.get('extra_values', [])
-
+        self.control_image = kwargs.get('control_image', None)
+        self.controlnet_conditioning_scale = kwargs.get('controlnet_conditioning_scale', 0.75)
+        self.control_guidance_start = kwargs.get('control_guidance_start', 0.0)
+        self.control_guidance_end = kwargs.get('control_guidance_end', 1.0)
 
 class LormModuleSettingsConfig:
     def __init__(self, **kwargs):
@@ -394,6 +398,7 @@ class TrainConfig:
 class ModelConfig:
     def __init__(self, **kwargs):
         self.name_or_path: str = kwargs.get('name_or_path', None)
+        self.control_image: str = kwargs.get('control_image', None)
         self.is_v2: bool = kwargs.get('is_v2', False)
         self.is_xl: bool = kwargs.get('is_xl', False)
         self.is_pixart: bool = kwargs.get('is_pixart', False)
@@ -447,6 +452,7 @@ class ModelConfig:
         self.quantize = kwargs.get("quantize", False)
         self.low_vram = kwargs.get("low_vram", False)
         self.attn_masking = kwargs.get("attn_masking", False)
+        self.controlnet_conditioning_scale = kwargs.get("controlnet_conditioning_scale", 1.0)
         if self.attn_masking and not self.is_flux:
             raise ValueError("attn_masking is only supported with flux models currently")
         pass
@@ -676,7 +682,15 @@ class GenerateImageConfig:
             refiner_start_at: float = 0.5,  # start at this percentage of a step. 0.0 to 1.0 . 1.0 is the end
             extra_values: List[float] = None,  # extra values to save with prompt file
             logger: Optional[EmptyLogger] = None,
+            control_image: Optional[Union[str, Image.Image]] = None,
+            controlnet_conditioning_scale: float = 1.0,
+            control_guidance_start: float = 0.0,
+            control_guidance_end: float = 1.0,
     ):
+        self.control_image = control_image
+        self.controlnet_conditioning_scale = controlnet_conditioning_scale
+        self.control_guidance_start = control_guidance_start
+        self.control_guidance_end = control_guidance_end
         self.width: int = width
         self.height: int = height
         self.num_inference_steps: int = num_inference_steps
@@ -786,6 +800,12 @@ class GenerateImageConfig:
                 prompt += ' --n ' + self.negative_prompt
             if self.negative_prompt_2 is not None:
                 prompt += ' --n2 ' + self.negative_prompt_2
+            if self.control_image:
+                prompt += f' --control_image {self.control_image}'
+                prompt += f' --controlnet_conditioning_scale {self.controlnet_conditioning_scale}'
+                prompt += f' --control_guidance_start {self.control_guidance_start}'
+                prompt += f' --control_guidance_end {self.control_guidance_end}'
+
             prompt += ' --w ' + str(self.width)
             prompt += ' --h ' + str(self.height)
             prompt += ' --seed ' + str(self.seed)
@@ -870,6 +890,15 @@ class GenerateImageConfig:
                     elif flag == 'extra_values':
                         # split by comma
                         self.extra_values = [float(val) for val in content.split(',')]
+                    elif flag == 'control_image':
+                        self.control_image = content
+                    elif flag == 'controlnet_conditioning_scale':
+                        self.controlnet_conditioning_scale = float(content)
+                    elif flag == 'control_guidance_start':
+                        self.control_guidance_start = float(content)
+                    elif flag == 'control_guidance_end':
+                        self.control_guidance_end = float(content)
+
 
     def post_process_embeddings(
             self,

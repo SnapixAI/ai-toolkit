@@ -7,9 +7,11 @@ import typing
 from typing import Union, List, Literal, Iterator
 import sys
 import os
+import traceback
 from collections import OrderedDict
 import copy
 import yaml
+import inspect
 from PIL import Image
 from diffusers.pipelines.pixart_alpha.pipeline_pixart_sigma import ASPECT_RATIO_1024_BIN, ASPECT_RATIO_512_BIN, \
     ASPECT_RATIO_2048_BIN, ASPECT_RATIO_256_BIN
@@ -62,6 +64,10 @@ from huggingface_hub import hf_hub_download
 from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
 from typing import TYPE_CHECKING
 
+from diffusers import FluxControlNetPipeline, FluxControlNetModel
+from diffusers.utils import load_image
+
+
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
 
@@ -91,6 +97,120 @@ DO_NOT_TRAIN_WEIGHTS = [
 DeviceStatePreset = Literal['cache_latents', 'generate']
 
 
+import torch
+import numpy as np
+
+class ControlImagePreparer:
+    def __init__(self, vae, image_processor, controlnet, vae_scale_factor=16):
+        self.vae = vae
+        self.image_processor = image_processor
+        self.controlnet = controlnet
+        self.vae_scale_factor = vae_scale_factor
+
+    def preprocess_image(self, image, width, height, batch_size, num_images_per_prompt, device, dtype, do_classifier_free_guidance=False, guess_mode=False):
+        if not isinstance(image, torch.Tensor):
+            image = self.image_processor.preprocess(image, height=height, width=width)
+
+        image_batch_size = image.shape[0]
+        repeat_by = batch_size if image_batch_size == 1 else num_images_per_prompt
+        image = image.repeat_interleave(repeat_by, dim=0)
+
+        image = image.to(device=device, dtype=dtype)
+
+        if do_classifier_free_guidance and not guess_mode:
+            image = torch.cat([image] * 2)
+        return image
+
+    def encode_image(self, image, batch_size, num_images_per_prompt, device, dtype, num_channels_latents):
+        image = image.to(self.vae.device)
+        control_image_latents = self.vae.encode(image).latent_dist.sample()
+        control_image_latents = (control_image_latents - self.vae.config.shift_factor) * self.vae.config.scaling_factor
+        height_control_image, width_control_image = control_image_latents.shape[2:]
+        control_image_latents = self._pack_latents(
+            control_image_latents,
+            batch_size * num_images_per_prompt,
+            num_channels_latents,
+            height_control_image,
+            width_control_image
+        )
+
+        return control_image_latents
+
+    @staticmethod
+    def _pack_latents(latents, batch_size, num_channels_latents, height, width):
+        latents = latents.view(batch_size, num_channels_latents, height // 2, 2, width // 2, 2)
+        latents = latents.permute(0, 2, 4, 1, 3, 5)
+        latents = latents.reshape(batch_size, (height // 2) * (width // 2), num_channels_latents * 4)
+        return latents
+
+    def prepare_control_image(self, image, width, height, batch_size, num_images_per_prompt, device, dtype, num_channels_latents, control_mode=None):
+        self.vae.to("cuda:0")
+        if isinstance(image, list):
+            assert len(image) == batch_size, f"Expected {batch_size} control images, but got {len(image)}"
+            control_images = []
+            control_modes = []
+
+            for i, single_image in enumerate(image):
+                control_image = self.preprocess_image(
+                    image=single_image,
+                    width=width,
+                    height=height,
+                    batch_size=1,
+                    num_images_per_prompt=num_images_per_prompt,
+                    device=device,
+                    dtype=dtype
+                )
+                control_images.append(control_image)
+
+                if control_mode is not None:
+                    control_mode_tensor = torch.tensor(control_mode[i]).to(device, dtype=torch.long).view(-1, 1)
+                    control_modes.append(control_mode_tensor)
+
+            stacked_control_images = torch.stack(control_images)
+
+            if not hasattr(self.controlnet, 'input_hint_block') or self.controlnet.input_hint_block is None:
+                encoded_control_images = self.encode_image(
+                    image=stacked_control_images,
+                    batch_size=batch_size,
+                    num_images_per_prompt=num_images_per_prompt,
+                    device=device,
+                    dtype=dtype,
+                    num_channels_latents=num_channels_latents
+                )
+            else:
+                encoded_control_images = stacked_control_images
+
+            print("Finished processing all control images")
+            return encoded_control_images, torch.stack(control_modes) if control_mode is not None else None
+        
+        else:
+            print("Processing single control image for all batch elements")
+            control_image = self.preprocess_image(
+                image=image,
+                width=width,
+                height=height,
+                batch_size=batch_size,
+                num_images_per_prompt=num_images_per_prompt,
+                device=device,
+                dtype=dtype
+            )
+
+            if not hasattr(self.controlnet, 'input_hint_block') or self.controlnet.input_hint_block is None:
+                control_image = self.encode_image(
+                    image=control_image,
+                    batch_size=batch_size,
+                    num_images_per_prompt=num_images_per_prompt,
+                    device=device,
+                    dtype=dtype,
+                    num_channels_latents=num_channels_latents
+                )
+
+            control_mode_tensor = None
+            if control_mode is not None:
+                control_mode_tensor = torch.tensor(control_mode).to(device, dtype=torch.long).view(-1, 1).expand(control_image.shape[0], 1)
+
+            return control_image, control_mode_tensor
+        
 class BlankNetwork:
 
     def __init__(self):
@@ -127,6 +247,7 @@ class StableDiffusion:
             noise_scheduler=None,
             quantize_device=None,
     ):
+        self.controlnet = None
         self.custom_pipeline = custom_pipeline
         self.device = device
         self.dtype = dtype
@@ -172,6 +293,7 @@ class StableDiffusion:
         self.is_pixart = model_config.is_pixart
         self.is_auraflow = model_config.is_auraflow
         self.is_flux = model_config.is_flux
+        self.controlnet_conditioning_scale = model_config.controlnet_conditioning_scale
 
         self.use_text_encoder_1 = model_config.use_text_encoder_1
         self.use_text_encoder_2 = model_config.use_text_encoder_2
@@ -191,7 +313,13 @@ class StableDiffusion:
     def load_model(self):
         if self.is_loaded:
             return
+        
         dtype = get_torch_dtype(self.dtype)
+
+        print("loading controlnet")
+        self.controlnet = FluxControlNetModel.from_pretrained("XLabs-AI/flux-controlnet-canny-diffusers",
+                                                torch_dtype=dtype, use_safetensors=True)
+        self.controlnet.to(self.device_torch, dtype=dtype)
 
         # move the betas alphas and  alphas_cumprod to device. Sometimed they get stuck on cpu, not sure why
         # self.noise_scheduler.betas = self.noise_scheduler.betas.to(self.device_torch)
@@ -540,8 +668,10 @@ class StableDiffusion:
 
             if self.model_config.lora_path is not None:
                 print("Fusing in LoRA")
+                print("controlnet", self.controlnet)
+
                 # need the pipe for peft
-                pipe: FluxPipeline = FluxPipeline(
+                pipe: FluxPipeline = FluxControlNetPipeline(
                     scheduler=None,
                     text_encoder=None,
                     tokenizer=None,
@@ -549,6 +679,7 @@ class StableDiffusion:
                     tokenizer_2=None,
                     vae=None,
                     transformer=transformer,
+                    controlnet=self.controlnet
                 )
                 if self.low_vram:
                     # we cannot fuse the loras all at once without ooming in lowvram mode, so we have to do it in parts
@@ -640,7 +771,7 @@ class StableDiffusion:
             text_encoder.to(self.device_torch, dtype=dtype)
 
             print("making pipe")
-            pipe: FluxPipeline = FluxPipeline(
+            pipe: FluxPipeline = FluxControlNetPipeline(
                 scheduler=scheduler,
                 text_encoder=text_encoder,
                 tokenizer=tokenizer,
@@ -648,6 +779,7 @@ class StableDiffusion:
                 tokenizer_2=tokenizer_2,
                 vae=vae,
                 transformer=None,
+                controlnet=self.controlnet
             )
             pipe.text_encoder_2 = text_encoder_2
             pipe.transformer = transformer
@@ -968,7 +1100,7 @@ class StableDiffusion:
                     )
 
                 else:
-                    pipeline = FluxPipeline(
+                    pipeline = FluxControlNetPipeline(
                         vae=self.vae,
                         transformer=self.unet,
                         text_encoder=self.text_encoder[0],
@@ -976,6 +1108,7 @@ class StableDiffusion:
                         tokenizer=self.tokenizer[0],
                         tokenizer_2=self.tokenizer[1],
                         scheduler=noise_scheduler,
+                        controlnet=self.controlnet,
                         **extra_args
                     )
                 pipeline.watermark = None
@@ -1065,6 +1198,13 @@ class StableDiffusion:
                     gen_config = image_configs[i]
 
                     extra = {}
+
+                    # if self.controlnet:
+                        # extra['control_image'] = gen_config.control_image
+                        # extra['conditioning_scale'] = gen_config.controlnet_conditioning_scale
+                        # extra['control_guidance_start'] = gen_config.control_guidance_start
+                        # extra['control_guidance_end'] = gen_config.control_guidance_end
+
                     validation_image = None
                     if self.adapter is not None and gen_config.adapter_image_path is not None:
                         validation_image = Image.open(gen_config.adapter_image_path).convert("RGB")
@@ -1254,9 +1394,43 @@ class StableDiffusion:
                                 **extra
                             ).images[0]
                         else:
+                            cast_dtype = self.unet.dtype
+                            controlnet_block_samples, controlnet_single_block_samples = None, None
+                            # if self.controlnet:
+                            #     # use image_path in gen_config.control_image, open image and resize to match latent_model_input_packed
+                            #     # print controlnet image path
+                            #     print(f"Controlnet image path: {self.model_config.control_image}")
+                            #     control_image = Image.open(self.model_config.control_image).resize((gen_config.width, gen_config.height))
+                            #     print(f"Control image size: {control_image.size}")
+                            #     control_image = transforms.ToTensor()(control_image)
+                            #     control_image = control_image.to(self.device_torch, dtype=self.torch_dtype)
+                            #     control_image = control_image.unsqueeze(0)
+                            #     print(f"Control image shape: {control_image.shape}")
+                            #     print(f"Latents: {gen_config.latents}")
+                            #     print(f"timestep: {self.noise_scheduler.timesteps}")
+                            #     print(f"encoder_hidden_states: {conditional_embeds.text_embeds}")
+                            #     print(f"pooled_projections: {conditional_embeds.pooled_embeds}")
+                            #     print(f"conditioning_scale: {self.model_config.controlnet_conditioning_scale}")
+                            #     controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+                            #         controlnet_cond=control_image,
+                            #         hidden_states=gen_config.latents,
+                            #         timestep=self.noise_scheduler.timesteps / 1000, # timestep is 1000 scale
+                            #         encoder_hidden_states=conditional_embeds.text_embeds,
+                            #         pooled_projections=conditional_embeds.pooled_embeds,
+                            #         conditioning_scale=self.model_config.controlnet_conditioning_scale,
+                            #         return_dict=False
+                            #     )
+                            #     #print the latents
+                            #     print(f"Latents shape: {gen_config.latents.shape}")
                             img = pipeline(
+                                # controlnet_block_samples=controlnet_block_samples,
+                                # controlnet_single_block_samples=controlnet_single_block_samples,
                                 prompt_embeds=conditional_embeds.text_embeds,
+                                control_image=load_image(self.model_config.control_image),
                                 pooled_prompt_embeds=conditional_embeds.pooled_embeds,
+                                control_guidance_start=0.2,
+                                control_guidance_end=0.8,
+                                controlnet_conditioning_scale=self.model_config.controlnet_conditioning_scale,
                                 # negative_prompt_embeds=unconditional_embeds.text_embeds,
                                 # negative_pooled_prompt_embeds=unconditional_embeds.pooled_embeds,
                                 height=gen_config.height,
@@ -1494,6 +1668,7 @@ class StableDiffusion:
             rescale_cfg=None,
             return_conditional_pred=False,
             guidance_embedding_scale=1.0,
+            edge_maps: Union[List[torch.Tensor], None] = None,
             **kwargs,
     ):
         conditional_pred = None
@@ -1677,6 +1852,9 @@ class StableDiffusion:
                     # if we are doing classifier free guidance, need to double up
                     latent_model_input = torch.cat([latents] * 2, dim=0)
                     timestep = torch.cat([timestep] * 2)
+                    # if edge_maps is not None:
+                        # print shape before and after
+                        # edge_maps = torch.cat([edge_maps] * 2, dim=0)
                 else:
                     latent_model_input = latents
 
@@ -1693,6 +1871,23 @@ class StableDiffusion:
                         else:
                             raise ValueError(
                                 f"Batch size of latents {latent_model_input.shape[0]} must be the same or half the batch size of timesteps {timestep.shape[0]}")
+
+            if self.controlnet and edge_maps is not None:
+                batch_size, ch, h, w = list(latents.shape)
+                # control_image_preparer = ControlImagePreparer(self.vae, self.pipeline.image_processor, self.controlnet)
+                # prepared_control_image, control_mode = control_image_preparer.prepare_control_image(
+                #                                         image=edge_maps,
+                #                                         width=w, 
+                #                                         height=h, 
+                #                                         batch_size=batch_size,
+                #                                         num_images_per_prompt=1, 
+                #                                         device=self.vae.device, 
+                #                                         dtype=get_torch_dtype(self.dtype), 
+                #                                         num_channels_latents=self.unet.config.in_channels
+                #                                         )
+
+                # print shapes
+                edge_maps = torch.stack(edge_maps)
 
             # predict the noise residual
             if self.is_pixart:
@@ -1718,7 +1913,7 @@ class StableDiffusion:
 
                 added_cond_kwargs = {"resolution": None, "aspect_ratio": None}
                 if self.unet.config.sample_size == 128 or (
-                        self.vae_scale_factor == 16 and self.unet.config.sample_size == 64):
+                                                self.vae_scale_factor == 16 and self.unet.config.sample_size == 64):
                     resolution = torch.tensor([height, width]).repeat(batch_size, 1)
                     aspect_ratio = torch.tensor([float(height / width)]).repeat(batch_size, 1)
                     resolution = resolution.to(dtype=text_embeddings.text_embeds.dtype, device=self.device_torch)
@@ -1780,6 +1975,25 @@ class StableDiffusion:
 
                     cast_dtype = self.unet.dtype
                     # with torch.amp.autocast(device_type='cuda', dtype=cast_dtype):
+                    use_controlnet = random.random() > 0.3
+
+                    if use_controlnet and self.controlnet:
+                        controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+                            hidden_states=latent_model_input_packed.to(self.device_torch, cast_dtype),
+                            timestep=timestep / 1000, # timestep is 1000 scale
+                            encoder_hidden_states=text_embeddings.text_embeds.to(self.device_torch, cast_dtype),
+                            controlnet_cond=edge_maps.reshape(latent_model_input.shape[0], -1, 64).to(self.device_torch, self.torch_dtype),
+                            pooled_projections=text_embeddings.pooled_embeds.to(self.device_torch, cast_dtype),
+                            txt_ids=txt_ids, # [1, 512, 3]
+                            img_ids=img_ids, # [1, 4096, 3]
+                            guidance=guidance,
+                            conditioning_scale=self.controlnet_conditioning_scale,
+                            return_dict=False
+                        )
+                    else:
+                        controlnet_block_samples = None
+                        controlnet_single_block_samples = None
+
                     noise_pred = self.unet(
                         hidden_states=latent_model_input_packed.to(self.device_torch, cast_dtype),  # [1, 4096, 64]
                         # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
@@ -1792,6 +2006,8 @@ class StableDiffusion:
                         img_ids=img_ids,  # [1, 4096, 3]
                         guidance=guidance,
                         return_dict=False,
+                        controlnet_block_samples=controlnet_block_samples,
+                        controlnet_single_block_samples=controlnet_single_block_samples,
                         **kwargs,
                     )[0]
 

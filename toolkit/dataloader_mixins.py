@@ -7,6 +7,7 @@ import os
 import random
 from collections import OrderedDict
 from typing import TYPE_CHECKING, List, Dict, Union
+import warnings
 
 import cv2
 import numpy as np
@@ -25,12 +26,257 @@ from PIL import Image, ImageFilter, ImageOps
 from PIL.ImageOps import exif_transpose
 import albumentations as A
 
-from toolkit.train_tools import get_torch_dtype
 
 if TYPE_CHECKING:
     from toolkit.data_loader import AiToolkitDataset
     from toolkit.data_transfer_object.data_loader import FileItemDTO
     from toolkit.stable_diffusion_model import StableDiffusion
+
+def HWC3(x):
+    assert x.dtype == np.uint8
+    if x.ndim == 2:
+        x = x[:, :, None]
+    assert x.ndim == 3
+    H, W, C = x.shape
+    assert C == 1 or C == 3 or C == 4
+    if C == 3:
+        return x
+    if C == 1:
+        return np.concatenate([x, x, x], axis=2)
+    if C == 4:
+        color = x[:, :, 0:3].astype(np.float32)
+        alpha = x[:, :, 3:4].astype(np.float32) / 255.0
+        y = color * alpha + 255.0 * (1.0 - alpha)
+        y = y.clip(0, 255).astype(np.uint8)
+        return y
+
+def resize_image(input_image, resolution):
+    H, W, C = input_image.shape
+    H = float(H)
+    W = float(W)
+    k = float(resolution) / min(H, W)
+    H *= k
+    W *= k
+    H = int(np.round(H / 64.0)) * 64
+    W = int(np.round(W / 64.0)) * 64
+    img = cv2.resize(
+        input_image,
+        (W, H),
+        interpolation=cv2.INTER_LANCZOS4 if k > 1 else cv2.INTER_AREA,
+    )
+    return img
+
+class EdgeMapFileItemDTOMixin:
+    def __init__(self: 'FileItemDTO', *args, **kwargs):
+        if hasattr(super(), '__init__'):
+            super().__init__(*args, **kwargs)
+        self.edge_map_tensor: Union[torch.Tensor, None] = None
+        self.edge_map_latent: Union[torch.Tensor, None] = None
+        self.edge_map_cache_dir = '/workspace/_edge_map_cache'
+        self.edge_map_latent_cache_dir = '/workspace/_edge_map_latent_cache'
+        self.edge_detection_method = 'canny'  # Default method
+        self.canny_threshold1 = 100
+        self.canny_threshold2 = 200
+        dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
+
+        # Configurable edge map format
+        self.edge_map_format = kwargs.get('edge_map_format', 'RGB')  # 'RGB' or 'RGBA'
+
+        img_path = kwargs.get('path', None)
+        file_name = os.path.basename(img_path)
+        file_dir = os.path.dirname(img_path)
+        file_name_without_ext = os.path.splitext(file_name)[0]
+        self.edge_map_path = os.path.join(
+            self.edge_map_cache_dir, f"{file_name_without_ext}_edge.png"
+        )
+        self.edge_map_latent_path = os.path.join(
+            self.edge_map_latent_cache_dir, f"{file_name_without_ext}_edge_latent.safetensors"
+        )
+        self.has_edge_map = os.path.exists(self.edge_map_path)
+
+    def load_edge_map(self: 'FileItemDTO'):
+        if not os.path.exists(self.edge_map_path):
+            # Generate and save the edge map if it doesn't exist
+            img = self.load_image(self.path)
+            resolution = self.dataset_config.resolution
+            edge_map = self.generate_edge_map(
+                input_image=img,
+                output_type="np",
+                detect_resolution=resolution,
+                image_resolution=resolution,
+            )
+            os.makedirs(os.path.dirname(self.edge_map_path), exist_ok=True)
+
+            # Convert numpy array to PIL Image and save
+            edge_map_pil = Image.fromarray(
+                edge_map.astype('uint8'), self.edge_map_format
+            )
+            edge_map_pil.save(self.edge_map_path)
+        else:
+            # Load the existing edge map using PIL
+            edge_map_pil = Image.open(self.edge_map_path).convert(
+                self.edge_map_format
+            )
+            edge_map = np.array(edge_map_pil)
+
+        # Convert to tensor
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+        ])
+        if self.aug_replay_spatial_transforms:
+            self.edge_map_tensor = self.augment_spatial_control(
+                Image.fromarray(edge_map), transform=transform
+            )
+        else:
+            self.edge_map_tensor = transform(edge_map)
+
+    def load_image(self: 'FileItemDTO', image_path: str) -> np.ndarray:
+        img = Image.open(image_path)
+        img = exif_transpose(img)
+        img = img.convert('RGB')
+        return np.array(img)
+
+    def generate_edge_map(
+        self,
+        input_image=None,
+        detect_resolution=768,
+        image_resolution=768,
+        output_type=None,
+        **kwargs,
+    ):
+        if "img" in kwargs:
+            warnings.warn(
+                "img is deprecated, please use `input_image=...` instead.",
+                DeprecationWarning,
+            )
+            input_image = kwargs.pop("img")
+
+        if input_image is None:
+            raise ValueError("input_image must be defined.")
+
+        if not isinstance(input_image, np.ndarray):
+            input_image = np.array(input_image, dtype=np.uint8)
+            output_type = output_type or "pil"
+        else:
+            output_type = output_type or "np"
+
+        input_image = HWC3(input_image)
+        input_image = resize_image(input_image, detect_resolution)
+
+        # Generate edge map using Canny
+        edge_map = cv2.Canny(
+            input_image, self.canny_threshold1, self.canny_threshold2
+        )
+        edge_map = HWC3(edge_map)
+
+        # Resize edge map to match image resolution
+        img = resize_image(input_image, image_resolution)
+        H, W, C = img.shape
+
+        edge_map = cv2.resize(edge_map, (W, H), interpolation=cv2.INTER_LINEAR)
+
+        if self.edge_map_format == 'RGBA':
+            # Create an alpha channel (fully opaque) and concatenate with the edge map to form RGBA
+            alpha_channel = np.ones((H, W), dtype=np.uint8) * 255  # Fully opaque
+            edge_map_output = np.dstack([edge_map, alpha_channel])  # (H, W, 4)
+        else:
+            edge_map_output = edge_map  # Already in (H, W, 3)
+
+        if output_type == "pil":
+            edge_map_output = Image.fromarray(
+                edge_map_output, self.edge_map_format
+            )
+
+        return edge_map_output
+
+    def load_edge_map_latent(self, vae, device='cuda'):
+        if os.path.exists(self.edge_map_latent_path):
+            self.edge_map_latent = load_file(self.edge_map_latent_path)['latent'].to(device)
+        else:
+            self.load_edge_map()
+            
+            edge_map_tensor = self.edge_map_tensor
+            
+            # Ensure edge_map_tensor has a batch dimension
+            if edge_map_tensor.dim() == 3:
+                edge_map_tensor = edge_map_tensor.unsqueeze(0)  # Add batch dimension
+            
+            with torch.no_grad():
+                vae.to(device)
+                encoded = vae.encode(edge_map_tensor.to(device, dtype=vae.dtype))
+                edge_map_latent = encoded.latent_dist.sample()
+                
+                # Remove batch dimension from latent
+                edge_map_latent = edge_map_latent.squeeze(0)
+                
+                # Apply shift and scale
+                edge_map_latent = (edge_map_latent - vae.config.shift_factor) * vae.config.scaling_factor
+                
+                self.edge_map_latent = edge_map_latent
+            
+            # Save latent
+            state_dict = OrderedDict([('latent', self.edge_map_latent.cpu())])
+            os.makedirs(os.path.dirname(self.edge_map_latent_path), exist_ok=True)
+            save_file(state_dict, self.edge_map_latent_path)
+        
+        return self.edge_map_latent
+
+class EdgeMapCachingMixin:
+    should_cache_edge_map_latents = True
+
+    def __init__(self: 'AiToolkitDataset', **kwargs):
+        if hasattr(super(), '__init__'):
+            super().__init__(**kwargs)
+        self.edge_detection_method = kwargs.get('edge_detection_method', 'canny')
+        self.edge_map_format = kwargs.get('edge_map_format', 'RGB')  # Configurable format
+
+    def cache_edge_maps(self: 'AiToolkitDataset'):
+        print(f"Caching edge maps for {self.dataset_path}")
+
+        # Use tqdm to show progress
+        for file_item in tqdm(self.file_list, desc='Caching edge maps'):
+            if file_item.has_edge_map:
+                continue
+
+            edge_map_path = file_item.edge_map_path
+
+            if not os.path.exists(edge_map_path):
+                # Load the image
+                img = np.array(Image.open(file_item.path).convert('RGB'))
+                # Generate the edge map
+                resolution = self.dataset_config.resolution
+                edge_map = file_item.generate_edge_map(
+                    img, detect_resolution=resolution, image_resolution=resolution
+                )
+                # Save the edge map
+                os.makedirs(os.path.dirname(edge_map_path), exist_ok=True)
+                edge_map_pil = Image.fromarray(
+                    edge_map.astype('uint8'), file_item.edge_map_format
+                )
+                edge_map_pil.save(edge_map_path)
+
+            # Verify that the files were created
+            if not os.path.exists(edge_map_path):
+                print(f"Warning: Failed to create edge map for {file_item.path}")
+            else:
+                file_item.has_edge_map = True
+
+        # Final verification
+        uncached_edge_maps = [f for f in self.file_list if f.has_edge_map and not os.path.exists(f.edge_map_path)]
+
+        if uncached_edge_maps:
+            print(f"Warning: {len(uncached_edge_maps)} edge maps were not cached.")
+
+        print("Edge map caching completed.")
+
+    def cache_edge_map_latents(self: 'AiToolkitDataset'):
+        # Use tqdm to show progress
+        for file_item in tqdm(self.file_list, desc='Caching edge map latents'):
+            if not file_item.has_edge_map:
+                continue
+
+            if not os.path.exists(file_item.edge_map_latent_path):
+                file_item.load_edge_map_latent(self.sd.vae)
 
 # def get_associated_caption_from_img_path(img_path):
 # https://demo.albumentations.ai/
@@ -49,8 +295,6 @@ class Augments:
                         self.params[key] = getattr(cv2, split_string[1].upper())
                     else:
                         raise ValueError(f"invalid cv2 enum: {split_string[1]}")
-
-
 transforms_dict = {
     'ColorJitter': transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.03),
     'RandomEqualize': transforms.RandomEqualize(p=0.2),
